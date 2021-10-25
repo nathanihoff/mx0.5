@@ -1,0 +1,669 @@
+---
+output:
+  # bookdown::word_document2
+  bookdown::pdf_document2:
+    toc: no
+    number_sections: no
+    pandoc_args: !expr rmdfiltr::add_wordcount_filter(rmdfiltr::add_citeproc_filter(args = NULL))
+    latex_engine: xelatex
+always_allow_html: true
+header-includes:
+# - \usepackage{setspace}\doublespace
+  # - \usepackage{endnotes}
+  # - \let\footnote=\endnote
+  # - \usepackage{endfloat}
+  # - \usepackage{fancyhdr}
+  # - \pagestyle{fancy}
+  # - \setlength{\headheight}{13.6pt}
+  # - \rhead{\textit{N.I. Hoffmann}}
+#  - \lhead{\textit{Draft. Please do not circulate.}}
+editor_options: 
+  chunk_output_type: console
+
+citeproc: no
+fontfamily: mathpazo
+fontsize: 11pt
+geometry: margin=1in
+indent: yes
+link-citations: yes
+linkcolor: blue
+lang: 'en-US'
+
+
+
+title: "Data Analysis"
+subtitle: "Strangers in the Homeland? The Academic Performance of Children of Return Migrants in Mexico"
+author: |
+  | Nathan I. Hoffmann
+  | Department of Sociology, UCLA
+
+  
+
+  
+# date: "`r format(Sys.time(), '%B %e, %Y')`"
+  
+---
+
+
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = F, warning = F, message = F, cache = T, results = 'asis')
+options("yaml.eval.expr" = TRUE)
+
+library(cem)
+library(sandwich)
+library(lmtest)
+library(estimatr)
+library(here)
+library(knitr)
+library(kableExtra)
+library(broom)
+library(haven)
+library(tidyverse)
+
+knit_hooks$set(inline = function(x) {
+  prettyNum(x, big.mark=",")
+})
+
+
+options("yaml.eval.expr" = TRUE, scipen = 3, digits = 2)
+
+uclablue = '#2774AE'
+gray = '#808080'
+black = '#000000'
+ucla_palette = c(black, uclablue, gray)
+
+# theme_set(theme_cowplot(font_family = 'Palatino') + 
+theme_set(theme_classic(base_family = 'Palatino') + 
+      theme(legend.title=element_blank(), 
+         panel.grid.major.y = element_line('grey80'),
+         legend.background = element_rect(fill = alpha("white", 0.5))
+         ))
+ggplot <- function(...) ggplot2::ggplot(...) + 
+  scale_color_brewer(palette="Dark2") +
+  scale_fill_brewer(palette="Dark2")
+
+kable <- function(...) knitr::kable(..., format.args = list(big.mark = ","))
+```
+
+```{r load, include = F}
+pisa_full <- readRDS(here('data', 'pisa.rds')) %>%
+   filter(across(c(female,  mom_ed, dad_ed, early_ed, cultural_pos, home_ed, age),
+                ~ !is.na(.x)))
+
+pisa_mex <- pisa_full %>%
+  filter(country == 'Mexico',
+         birth_country %in% c('Mexico', 'United States of America'),
+         mom_country == 'Mexico',
+         dad_country == 'Mexico') %>%
+  mutate(birth_country = ifelse(birth_country == 'United States of America', 'USA', as.character(birth_country)),
+         treat = as.numeric(birth_country == 'USA'))
+
+pisa_us <-  pisa_full %>%
+  filter((country %in% c('United States', 'United States of America') & 
+            birth_country == 'United States of America' &
+            lang == 'Spanish' &
+            mom_country == 'Another country (USA)' & 
+            dad_country == 'Another country (USA)')) %>%
+  mutate(country = 'USA',
+         birth_country = 'USA')
+
+pisa_mex_us <- bind_rows(
+    filter(pisa_mex, birth_country == 'USA'),
+    pisa_us
+) %>%
+  mutate(treat = as.numeric(country == 'Mexico'))
+```
+
+```{r functions, eval = F}
+
+rubin_rules <- function(call, estimate_name, variance_name, pv_num = 5){
+  call_name <- "difference_in_means(formula(paste0(paste0(outcome, pv), '~ treat')), 
+                                             data = datasets[[i]])"
+  eval(str2lang(call_name))
+}
+
+for(outcome in c('read', 'math', 'scie')){
+    est_dim <- rep(NA, 5)
+    var_dim <- rep(NA, 5)
+    est_ols <- rep(NA, 5)
+    var_ols <- rep(NA, 5)
+      for(pv in 1:5){
+        dim <- difference_in_means(formula(paste0(paste0(outcome, pv), '~ treat')), 
+                                             data = datasets[[i]])
+        est_dim[pv] <- dim$coefficients
+        var_dim[pv] <- (dim$std.error)^2
+        
+        lm_model <- 
+         lm(paste0(paste0(outcome, pv), '~ treat + mom_ed + dad_ed + female + early_ed +
+              cultural_pos + home_ed + age + year'), data = datasets[[i]])
+        
+            est_ols[pv] <- tidy(lm_model)[[2,2]]
+            var_ols[pv] <- vcovHC(lm_model, type="HC1")[2,2]
+      }
+    
+    est_out_dim <- mean(est_dim)
+    var_samp_dim <- mean(var_dim)
+    var_imp_dim <- sum((est_dim - est_out_dim)^2)/4
+    se_out_dim <- sqrt(var_samp_dim + (1 + 1/5)*var_imp_dim)
+```
+
+
+
+# Descriptive Statistics
+```{r desc}
+# gtsummary::theme_gtsummary_compact()
+# 
+# bind_rows(mutate(pisa_mex, treat = ifelse(treat == 1, 'Children of returnees', 'Mexico')),
+#           filter(pisa_mex_us, treat == 0) %>% mutate(treat ='U.S. spanish-speaking')) %>%
+#   select(treat, mom_ed, dad_ed, female, early_ed,  cultural_pos, home_ed, year,
+#   wealth, 	home_pos, 	ict_res, 	
+#   parent_ed_isced, 	parent_ed_years, 	parent_isei, 	mom_isei, 
+#   dad_isei, 	escs, 	school_belonging) %>%
+#   mutate(mom_ed = as.numeric(mom_ed), dad_ed = as.numeric(dad_ed), 
+#          parent_ed_isced = as.numeric(parent_ed_isced)) %>%
+#   gtsummary::tbl_summary(by = 'treat')
+
+
+stacked_bar <- function(data, x, fill){
+  data %>%
+    filter(!is.na(!!sym(x)) & !is.na(!!sym(fill))) %>%
+    count(!!sym(x), !!sym(fill)) %>%
+    ggplot(aes(x = !!sym(x), y = n, fill = !!sym(fill))) +
+    geom_bar(position='fill', stat = 'identity') +
+    theme(axis.text.x = element_text(angle = -30)) +
+    labs(title = fill)
+}
+
+desc_data <- bind_rows(mutate(pisa_mex, treat = ifelse(treat == 1, 'Children of returnees', 'Mexico')),
+          filter(pisa_mex_us, treat == 0) %>% mutate(treat ='U.S. spanish-speaking')) %>%
+  select(treat, mom_ed, dad_ed, female, early_ed,  cultural_pos, home_ed, year,
+  wealth, 	home_pos, 	ict_res, 	
+  parent_ed_isced, 	parent_ed_years, 	parent_isei, 	mom_isei, 
+  dad_isei, 	escs, 	school_belonging) %>%
+  as.data.frame()
+
+for(var_name in names(desc_data)[2:ncol(desc_data)]){
+  if(class(desc_data[,var_name]) == 'factor'){
+    print(stacked_bar(desc_data, x = 'treat', fill = var_name))
+  } else{
+    print(desc_data %>%
+      ggplot(aes(x = !!sym(var_name), color = treat)) +
+      geom_density())
+  }
+}
+
+
+
+```
+
+
+
+
+
+
+```{r stats}
+bind_rows(
+  pisa_mex %>%
+    group_by(country, birth_country) %>%
+    summarize(n = n(),
+              Reading = mean(read1),
+              `Reading SD` = sd(read1),
+              Math = mean(math1),
+              `Math SD` = sd(math1),
+              Science = mean(scie1),
+              `Science SD` = sd(scie1)),
+  pisa_us %>%
+    group_by(country, birth_country) %>%
+    summarize(n = n(),
+              Reading = mean(read1),
+              `Reading SD` = sd(read1),
+              Math = mean(math1),
+              `Math SD` = sd(math1),
+              Science = mean(scie1),
+              `Science SD` = sd(scie1))) %>%
+  rename(`Birth Country` = birth_country,
+         Country = country) %>%
+  kable(booktabs = T,
+        caption = 'Sample sizes and PISA score means and standard deviations. The USA sample includes only children born to Spanish-speaking immigrant parents.') %>%
+  footnote(general = 'OECD PISA data for 2012, 2015, and 2018. Author\'s calculations.',
+           general_title = 'Source:',
+           footnote_as_chunk = T)
+```
+
+
+
+```{r dim, results = 'hide', fig.height = 3.5, fig.cap = "Difference-in-means (DIM), OLS, and coarsened exact matching (CEM) estimates, comparing children of return migrants in Mexico to children in Mexico and children of Spanish-speaking immigrants in the U.S. Error bars represent 95% asymptotic confidence intervals. OLS and CEM models adjust for parents' education, cultural possessions, home educational resources, age, ECEC, gender, and survey year."}
+## DIM and OLS
+dim_list <- list()
+datasets <- list(pisa_mex, pisa_mex_us)
+samples <- c('Mexico', 'USA')
+
+for(i in 1:2){
+  for(outcome in c('read', 'math', 'scie')){
+    est_dim <- rep(NA, 5)
+    var_dim <- rep(NA, 5)
+    est_ols <- rep(NA, 5)
+    var_ols <- rep(NA, 5)
+      for(pv in 1:5){
+        dim <- difference_in_means(formula(paste0(paste0(outcome, pv), '~ treat')), 
+                                             data = datasets[[i]])
+        est_dim[pv] <- dim$coefficients
+        var_dim[pv] <- (dim$std.error)^2
+        
+        lm_model <- 
+         lm(paste0(paste0(outcome, pv), '~ treat + mom_ed + dad_ed + female + early_ed +
+              cultural_pos + home_ed + age + year'), data = datasets[[i]])
+        
+            est_ols[pv] <- tidy(lm_model)[[2,2]]
+            var_ols[pv] <- vcovHC(lm_model, type="HC1")[2,2]
+      }
+    
+    est_out_dim <- mean(est_dim)
+    var_samp_dim <- mean(var_dim)
+    var_imp_dim <- sum((est_dim - est_out_dim)^2)/4
+    se_out_dim <- sqrt(var_samp_dim + (1 + 1/5)*var_imp_dim)
+    
+    dim_list[[paste0(i, outcome, 'dim')]] <-
+      data.frame(sample = samples[i], 
+                 method = 'DIM',
+                 Outcome = outcome, 
+                 Estimate = est_out_dim,
+                 se = se_out_dim)
+    
+    est_out_ols <- mean(est_ols)
+    var_samp_ols <- mean(var_ols)
+    var_imp_ols <- sum((est_ols - est_out_ols)^2)/4
+    se_out_ols <- sqrt(var_samp_ols + (1 + 1/5)*var_imp_ols)
+    
+    dim_list[[paste0(i, outcome, 'ols')]] <-
+      data.frame(sample = samples[i],
+                 method = 'OLS',
+                 Outcome = outcome, 
+                 Estimate = est_out_ols,
+                 se = se_out_ols)
+  }
+}
+
+## CEM
+vars <- c('mom_ed', 'dad_ed', 'female', 'early_ed', 'cultural_pos', 
+          'home_ed', 'age', 'year') 
+cem_data <- pisa_mex %>%
+  filter(across(c(female,  mom_ed, dad_ed, early_ed, cultural_pos, home_ed, age),
+                               ~ !is.na(.x))) %>%
+  as.data.frame()
+cem_out <- cem(treatment = 'treat', 
+               data = cem_data[c(vars, 'treat')],
+               eval.imbalance = F)
+
+cem_list <- list()
+for(outcome in c('read', 'math', 'scie')){
+  est <- rep(NA, 5)
+  var <- rep(NA, 5)
+  for(pv in 1:5){
+    cem_est <- att(cem_out, 
+                   as.formula(paste0(paste0(outcome, pv), ' ~ treat')), 
+                   data = cem_data)
+    est[pv] <- cem_est$att.model[1,2]
+    var[pv] <- (cem_est$att.model[2,2])^2
+  }
+  
+  est_out <- mean(est)
+  var_samp <- mean(var)
+  var_imp <- sum((est - est_out)^2)/4
+  se_out <- sqrt(var_samp + (1 + 1/5)*var_imp)
+  
+  cem_list[[outcome]] <-
+    bind_rows(
+      data.frame(sample = 'Mexico',
+                 method = 'CEM',
+               Outcome = outcome,
+               Estimate = est_out,
+               se = se_out))
+      # data.frame(spec = 'CEM Extrapolated',
+      #            Outcome = outcome,
+      #            Estimate = cem_est_ex$att.model[1,1],
+      #            se = cem_est_ex$att.model[2,1]))
+}
+
+dim_fig <- bind_rows(bind_rows(dim_list), bind_rows(cem_list)) %>%
+    mutate(Outcome = recode_factor(Outcome,
+                                 'read' = 'Reading',
+                                 'math' = 'Math',
+                                 'scie' = 'Science'),
+            method = factor(method, 
+                            levels = c('DIM', 'OLS', 'CEM')),
+            sample = factor(sample, levels = c('Mexico', 'USA')))
+                       # levels = c("Mexico DIM", "Mexico OLS", "Mexico CEM", "USA DIM", "USA OLS")))
+
+
+ggplot(dim_fig, aes(x = method, y = Estimate, color = Outcome)) +
+  geom_point(position = position_dodge(0.2)) +
+  geom_errorbar(aes(ymin = Estimate - 1.96*se, ymax = Estimate + 1.96*se),
+                width = .1, alpha = 1, position = position_dodge(0.2)) +
+  geom_hline(yintercept = 0) +
+  facet_wrap(~sample, scales = 'free_x') +
+  #scale_y_continuous(breaks = c(seq(-100,50,20))) +
+  labs(x = 'Method', y = '') +
+  theme(#axis.text.x=element_text(angle=-15),
+        legend.justification=c(1,0), 
+        legend.position=c(.3,.15))
+```
+
+
+```{r balance, eval = F, fig.cap = 'Covariate balance for pooled PISA data. Points represent means and bars represent the 90% inner quantile of each covariate distribution.'}
+balance_table_pre <- function(treat, varlist, data){
+  # Convert factors to numeric data
+  # data <- data[, c(treat,varlist)] %>%
+  #   mutate(across(where(is.factor), function(x){as.numeric(x) - 1}))
+  
+  data <- as.data.frame(data)
+  
+  # Expand factor variables into dummies
+  for(var in varlist){
+    if(is.factor(data[,var])){
+      for(level in sort(unique(data[,var]))){
+        new_var <- paste0(var, '_', level)
+        data[,new_var] <- as.numeric(data[,var] == level)
+        varlist <- c(varlist, new_var)
+      }
+      data <- select(data, -var)
+      varlist <- varlist[varlist != var]
+      }
+    }
+  
+  # Make container 
+  balance_table <- list()
+  
+  # Make a loop to get means, compute difference, standardized bias, t-test, KS p-val
+  for(var in varlist){
+    # Get treatment and control groups for var
+    treated <- data %>%
+      filter(!!sym(treat) == 1) %>%
+      pull(var)
+  
+    control <- data %>%
+      filter(!!sym(treat) == 0) %>%
+      pull(var)
+  
+    # Summary statistics for each variable
+    balance_table[[var]] = tibble(
+      variable = var,
+      mean_c = mean(control),
+      sd_c = sd(control),
+      mean_t = mean(treated),
+      sd_t = sd(treated),
+      t_stat = (mean_t - mean_c)/sqrt(sd_t^2/length(treated) + sd_c^2/length(control)),
+      nor_diff = (mean_t - mean_c)/sqrt((sd_t^2 + sd_c^2)/2),
+      quart_25_c = quantile(control, .05),
+      quart_25_t = quantile(treated, .05),
+      quart_75_c = quantile(control, .95),
+      quart_75_t = quantile(treated, .95)
+      )
+  }
+  return(bind_rows(balance_table))
+}
+
+balance_tab <- balance_table_pre(treat = 'treat', 
+                varlist = c('mom_ed', 'dad_ed', 'female', 'early_ed', 
+                            'cultural_pos', 'home_ed',
+                            'year'), 
+                data = pisa_mex_us %>%
+                  filter(across(c(female,  mom_ed, dad_ed, early_ed, cultural_pos, home_ed, age),
+                               ~ !is.na(.x))) %>%
+                  mutate(mom_ed = as.numeric(mom_ed),
+                         dad_ed = as.numeric(dad_ed))) %>%
+  arrange(variable) 
+balance_tab$variable <- c(
+  #'Age',
+  'Cultural Possessions',
+  'Father\'s Education',
+  'ECEC: 0-1',
+  'ECEC: 1+',
+  'ECEC: none',
+  'Female',
+  'Home Education',
+  'Mother\'s Education',
+  'Year: 2012',
+  'Year: 2015',
+  'Year: 2018')
+
+bind_rows(balance_tab %>%
+            select(variable, mean_c, quart_25_c, quart_75_c) %>%
+            mutate(group = 'U.S. comparison group') %>%
+            rename(mean = mean_c, quart_25 = quart_25_c, quart_75 = quart_75_c),
+          balance_tab %>%
+            select(variable, mean_t, quart_25_t, quart_75_t) %>%
+            mutate(group = 'Children of return migrants') %>%
+            rename(mean = mean_t, quart_25 = quart_25_t, quart_75 = quart_75_t)) %>%
+  mutate(variable = factor(variable, 
+                           levels = sort(unique(balance_tab$variable), 
+                                         decreasing = T))) %>%
+  ggplot(aes(x = variable, y = mean, color = group)) +
+  geom_hline(yintercept = 0, linetype = 2, color = 'grey') +
+  geom_point(position = position_dodge(0.4)) +
+  geom_errorbar(aes(ymin = quart_25, ymax = quart_75),
+                width = .2, alpha = 1, position = position_dodge(0.4)) +
+  coord_flip() +
+  labs(x = '', y = '') +
+  theme(legend.justification=c(1,0),
+        legend.position=c(.9,.055)) 
+```
+
+
+# Post-migration variables
+```{r}
+
+```
+
+```{r balance, eval = F, fig.cap = 'Covariate balance for pooled PISA data. Points represent means and bars represent the 90% inner quantile of each covariate distribution.'}
+balance_table_pre <- function(treat, varlist, data){
+  # Convert factors to numeric data
+  # data <- data[, c(treat,varlist)] %>%
+  #   mutate(across(where(is.factor), function(x){as.numeric(x) - 1}))
+  
+  data <- as.data.frame(data)
+  
+  # Expand factor variables into dummies
+  for(var in varlist){
+    if(is.factor(data[,var])){
+      for(level in sort(unique(data[,var]))){
+        new_var <- paste0(var, '_', level)
+        data[,new_var] <- as.numeric(data[,var] == level)
+        varlist <- c(varlist, new_var)
+      }
+      data <- select(data, -var)
+      varlist <- varlist[varlist != var]
+      }
+    }
+  
+  # Make container 
+  balance_table <- list()
+  
+  # Make a loop to get means, compute difference, standardized bias, t-test, KS p-val
+  for(var in varlist){
+    # Get treatment and control groups for var
+    treated <- data %>%
+      filter(!!sym(treat) == 1) %>%
+      pull(var)
+  
+    control <- data %>%
+      filter(!!sym(treat) == 0) %>%
+      pull(var)
+  
+    # Summary statistics for each variable
+    balance_table[[var]] = tibble(
+      variable = var,
+      mean_c = mean(control),
+      sd_c = sd(control),
+      mean_t = mean(treated),
+      sd_t = sd(treated),
+      t_stat = (mean_t - mean_c)/sqrt(sd_t^2/length(treated) + sd_c^2/length(control)),
+      nor_diff = (mean_t - mean_c)/sqrt((sd_t^2 + sd_c^2)/2),
+      quart_25_c = quantile(control, .05),
+      quart_25_t = quantile(treated, .05),
+      quart_75_c = quantile(control, .95),
+      quart_75_t = quantile(treated, .95)
+      )
+  }
+  return(bind_rows(balance_table))
+}
+
+balance_tab <- balance_table_pre(treat = 'treat', 
+                varlist = c('mom_ed', 'dad_ed', 'female', 'early_ed', 
+                            'cultural_pos', 'home_ed',
+                            'year'), 
+                data = pisa_mex_us %>%
+                  filter(across(c(female,  mom_ed, dad_ed, early_ed, cultural_pos, home_ed, age),
+                               ~ !is.na(.x))) %>%
+                  mutate(mom_ed = as.numeric(mom_ed),
+                         dad_ed = as.numeric(dad_ed))) %>%
+  arrange(variable) 
+balance_tab$variable <- c(
+  #'Age',
+  'Cultural Possessions',
+  'Father\'s Education',
+  'ECEC: 0-1',
+  'ECEC: 1+',
+  'ECEC: none',
+  'Female',
+  'Home Education',
+  'Mother\'s Education',
+  'Year: 2012',
+  'Year: 2015',
+  'Year: 2018')
+
+bind_rows(balance_tab %>%
+            select(variable, mean_c, quart_25_c, quart_75_c) %>%
+            mutate(group = 'U.S. comparison group') %>%
+            rename(mean = mean_c, quart_25 = quart_25_c, quart_75 = quart_75_c),
+          balance_tab %>%
+            select(variable, mean_t, quart_25_t, quart_75_t) %>%
+            mutate(group = 'Children of return migrants') %>%
+            rename(mean = mean_t, quart_25 = quart_25_t, quart_75 = quart_75_t)) %>%
+  mutate(variable = factor(variable, 
+                           levels = sort(unique(balance_tab$variable), 
+                                         decreasing = T))) %>%
+  ggplot(aes(x = variable, y = mean, color = group)) +
+  geom_hline(yintercept = 0, linetype = 2, color = 'grey') +
+  geom_point(position = position_dodge(0.4)) +
+  geom_errorbar(aes(ymin = quart_25, ymax = quart_75),
+                width = .2, alpha = 1, position = position_dodge(0.4)) +
+  coord_flip() +
+  labs(x = '', y = '') +
+  theme(legend.justification=c(1,0),
+        legend.position=c(.9,.055)) 
+```
+
+
+```{r mex-us-compare-test, eval = F}
+# early_ed, wealth, parent_ed_years, parent_isei
+
+desc_data <- pisa_mex_us %>% 
+  select(treat, mom_ed, dad_ed, parent_ed, female, early_ed,  cultural_pos, home_ed, year,
+  wealth, 	home_pos, 	ict_res, 	
+  parent_ed_years, 	parent_isei, 	mom_isei, 
+  dad_isei, 	escs, 	school_belonging, family_structure, mom_ed_fct, dad_ed_fct, parent_ed_fct, 
+  senate_weight) %>%
+  mutate(parent_ed_years = as_factor(parent_ed_years)) %>%
+  as.data.frame()
+
+plot_list_cont <- list()
+plot_list_cat <- list()
+plot_list <- list()
+
+
+
+for(var_name in names(desc_data)[2:(ncol(desc_data)-1)]){
+  if(class(desc_data[,var_name]) %in% c('character', 'factor')){
+   # <- stacked_bar(desc_data, x = 'treat', fill = var_name)
+    
+    # plot_list_cat[[var_name]]  <- desc_data %>% 
+    #   filter(!is.na(!!sym(var_name))) %>%
+    #   mutate(treat = ifelse(treat == 1, "0.5 gen.", "U.S.")) %>%
+    #   group_by(treat) %>%
+    #   count(!!sym(var_name), wt = senate_weight) %>%
+    #   ggplot(aes(x = treat, y = n, fill = !!sym(var_name))) +
+    #   geom_bar(position='fill', stat = 'identity') +
+    #   geom_text(aes(label = !!sym(var_name)), size = 2.5,
+    #             position = position_fill(vjust = 0.5), color = 'white') +
+    #   labs(x = '', y = '', 
+    #        title = var_name) + 
+    #   theme(legend.position = "none")
+    
+    # plot_list[[var_name]]  <- pisa_mex_us %>%
+    #   mutate(treat = ifelse(treat == 1, '0.5 generation', 'U.S. spanish-speaking')) %>%
+    #   filter(!is.na(!!sym(var_name))) %>%
+    #   group_by(treat) %>%
+    #   count(!!sym(var_name), wt = weight) %>%
+    #   mutate(prop = n /sum(.[,'n'])) %>%
+    #   ggplot(aes(x = !!sym(var_name), y = prop, color = treat, fill = treat)) +
+    #   geom_col(width = .99, position = 'dodge') +
+    #   labs(x = '', y = '', 
+    #        title = var_name)
+    
+    plot_list[[var_name]]  <- pisa_mex_us %>%
+      mutate(treat = ifelse(treat == 1, '0.5 generation', 'U.S. spanish-speaking')) %>%
+      filter(!is.na(!!sym(var_name))) %>%
+      group_by(treat, !!sym(var_name)) %>%
+      count(wt = weight) %>%
+      group_by(treat) %>%
+      mutate(prop = n /sum(n)) %>%
+      ggplot(aes(x = !!sym(var_name), y = prop, color = treat, fill = treat)) +
+      geom_col(position = 'dodge') +
+      labs(x = '', y = '', 
+           title = var_name)
+
+    
+    
+  } else{
+    plot_list[[var_name]]  <- desc_data %>%
+      mutate(treat = ifelse(treat == 1, '0.5 generation', 'U.S. spanish-speaking')) %>%
+      ggplot(aes(x = !!sym(var_name), color = treat, fill = treat)) +
+      geom_histogram(aes(y=..density..,
+                     weight = senate_weight),
+                     position = 'dodge')
+      # geom_density(aes(weight = senate_weight))
+  }
+}
+#desc_data$family_structure
+
+wrap_plots(plot_list) + plot_layout(guides = 'collect')
+
+# wrap_plots(plot_list_cat) 
+# wrap_plots(plot_list_cont) + plot_layout(guides = 'collect')
+
+var_name <- 'parent_ed_years'
+pisa_mex_us %>%
+      mutate(treat = ifelse(treat == 1, '0.5 generation', 'U.S. spanish-speaking')) %>%
+      ggplot(aes(x = !!sym(var_name), color = treat)) +
+      # geom_histogram(aes(y=..density..,
+      #                weight = senate_weight),
+      #                position = 'dodge')
+      geom_density(aes(weight = senate_weight), adjust = 2.5)
+```
+
+
+```{r over-time, eval = T}
+time_mex <- list()
+time_us <- list()
+for(year_loop in c(2012, 2015, 2018)){
+  time_mex[[year_loop]] <- rubin(filter(pisa_mex, year == year_loop), 'Mexico') %>%
+    mutate(year = year_loop)
+  time_us[[year_loop]] <- rubin(filter(pisa_mex_us, year == year_loop), 'Mexico-US') %>%
+    mutate(year = year_loop)
+}
+
+bind_rows(time_mex, time_us) %>%
+  ggplot(aes(x = year, y = Estimate, color = sample, fill = sample)) +
+  geom_line() +
+  geom_ribbon(aes(ymin = Estimate - 1.96*se, ymax = Estimate + 1.96*se, color = NULL), 
+              alpha = .2) +
+  facet_wrap(~Outcome, nrow = 3)
+
+pisa_full %>%
+  filter(country == 'Mexico', birth_country == 'United States of America') %>%
+  group_by(year) %>%
+  count(wt = weight)
+```
