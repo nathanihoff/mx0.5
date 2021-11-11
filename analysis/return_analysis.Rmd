@@ -667,3 +667,18 @@ pisa_full %>%
   group_by(year) %>%
   count(wt = weight)
 ```
+
+
+# Sample sizes for world
+```{r}
+pisa_full %>%
+  filter(birth_country != country & (mom_country == country | dad_country == country)) %>%
+  filter(birth_country != "" & 
+           !str_detect(birth_country, 'Another|Missing|A country|Other|another|other|country|Invalid|Not Applicable')) %>%
+  #group_by(country, birth_country) %>%
+  count() %>%
+  arrange(desc(n)) 
+```
+
+
+

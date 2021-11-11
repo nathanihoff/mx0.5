@@ -249,9 +249,8 @@ for(v in c('COBN_S', 'COBN_F', 'COBN_M', 'NC')){
 for(v in c('OCOD1', 'OCOD2', 'MISCED', 'FISCED', 'HISCED')){
   val_labels(pisa_2012[[v]]) <- val_labels(pisa_2018[[v]])
 }
-
-
 val_labels(pisa_2012[['LANGN']]) <- val_labels(pisa_2015$LANGN)
+
 pisa_2012 <- pisa_2012 %>%  
     mutate(
     id = as.character(STIDSTD),
@@ -260,7 +259,9 @@ pisa_2012 <- pisa_2012 %>%
     weight = as.numeric(W_FSTUWT),
     # Make countries character variables
     country = ifelse(CNT == 'GBR', 'United Kingdom', as.character(as_factor(NC))),
-    birth_country = as_factor(COBN_S),
+    birth_country = as.character(as_factor(COBN_S)),
+    birth_country = ifelse(str_starts(birth_country, '9'), 
+                           'Another country', birth_country),
     mom_country = as_factor(COBN_M),
     dad_country = as_factor(COBN_F),
     imm_category = as_factor(IMMIG),
@@ -307,6 +308,8 @@ pisa_2012 <- pisa_2012 %>%
     unfair_teacher_2012 = ST86Q05,
     school_location = as_factor(SC03Q01),
     senate_weight = SENWGT_STU*5)
+
+
 
 
 
