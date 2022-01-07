@@ -1,0 +1,319 @@
+---
+output:
+  # bookdown::word_document2:
+    # reference_docx: "word-template.docx"
+  bookdown::pdf_document2:
+    toc: yes
+    number_sections: yes
+    pandoc_args: !expr rmdfiltr::add_wordcount_filter(rmdfiltr::add_citeproc_filter(args = NULL))
+    latex_engine: xelatex
+always_allow_html: true
+header-includes:
+# - \usepackage{setspace}\doublespace
+  # - \usepackage{endnotes}
+  # - \let\footnote=\endnote
+  # - \usepackage{endfloat}
+# - \setlength{\headheight}{14.5pt}
+- \setlength{\headheight}{13.6pt}
+- \usepackage{fancyhdr}
+- \pagestyle{fancy}
+- \rhead{N.I. Hoffmann}
+- \lhead{`r format(Sys.time(), '%B %e, %Y')`}
+editor_options: 
+  chunk_output_type: console
+
+citeproc: no
+fontfamily: mathpazo
+fontsize: 11pt
+geometry: margin=1in
+indent: yes
+link-citations: yes
+linkcolor: blue
+lang: 'en-US'
+
+
+bibliography: "My Library.bib"  
+csl: apa.csl
+# csl: american-sociological-association.csl
+
+title: "Supplementary Material"
+subtitle: "Strangers in the Homeland? The Academic Performance of Children of Return Migrants in Mexico"
+author: |
+  | Nathan I. Hoffmann
+  | Department of Sociology, UCLA
+
+  
+date: "`r format(Sys.time(), '%B %e, %Y')`"
+  
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = F, warning = F, message = F, cache = T)
+options("yaml.eval.expr" = TRUE)
+
+# library(flextable)
+library(patchwork)
+library(srvyr)
+library(patchwork)
+library(cem)
+library(sandwich)
+library(lmtest)
+library(estimatr)
+library(here)
+library(knitr)
+library(kableExtra)
+library(broom)
+library(sensemakr)
+library(MatchIt)
+library(stargazer)
+library(haven)
+library(tidyverse)
+
+knit_hooks$set(inline = function(x) {
+  prettyNum(x, big.mark=",")
+})
+
+
+options("yaml.eval.expr" = TRUE, scipen = 3, digits = 2)
+
+uclablue = '#2774AE'
+gray = '#808080'
+black = '#000000'
+ucla_palette = c(black, uclablue, gray)
+
+# theme_set(theme_cowplot(font_family = 'Palatino') + 
+theme_set(theme_classic(base_family = 'Palatino') + 
+      theme(legend.title=element_blank(), 
+         panel.grid.major.y = element_line('grey80'),
+         legend.background = element_rect(fill = alpha("white", 0.5))
+         ))
+ggplot <- function(...) ggplot2::ggplot(...) + 
+  scale_color_brewer(palette="Dark2") +
+  scale_fill_brewer(palette="Dark2")
+
+kable <- function(...) knitr::kable(..., format.args = list(big.mark = ","))
+```
+
+```{r load, include = F}
+pisa_full <- readRDS(here('data', 'pisa.rds')) %>%
+   filter(across(c(female,  mom_ed, dad_ed, early_ed, cultural_pos, home_ed, age),
+                ~ !is.na(.x))) %>%
+  mutate(school_id = paste0(year, school_id),
+         village = school_location == 'Village',
+         non_urban = ifelse(!is.na(school_location), school_location %in% c('Village', 'Small Town', 'Town'), NA))
+
+pisa_mex <- pisa_full %>%
+  filter(country == 'Mexico',
+         birth_country %in% c('Mexico', 'United States of America'),
+         mom_country == 'Mexico',
+         dad_country == 'Mexico') %>%
+  mutate(birth_country = ifelse(birth_country == 'United States of America', 'USA', as.character(birth_country)),
+         treat = as.numeric(birth_country == 'USA'))
+
+pisa_us <-  pisa_full %>%
+  filter((country %in% c('United States', 'United States of America') & 
+            birth_country == 'United States of America' &
+            lang == 'Spanish' &
+            mom_country == 'Another country (USA)' & 
+            dad_country == 'Another country (USA)')) %>%
+  mutate(country = 'USA',
+         birth_country = 'USA')
+
+pisa_mex_us <- bind_rows(
+    filter(pisa_mex, birth_country == 'USA'),
+    pisa_us
+) %>%
+  mutate(treat = as.numeric(country == 'Mexico'))
+
+
+pisa_full %>%
+  filter(country == 'Mexico',
+         birth_country == 'United States of America',
+         mom_country == 'Mexico', dad_country == 'Mexico') %>%
+  mutate(birth_country = ifelse(birth_country == 'United States of America', 'USA', as.character(birth_country)),
+         treat = as.numeric(birth_country == 'USA')) %>%
+  nrow()
+```
+
+```{r functions}
+rubin_lm <- function(dataset, covariates, pv_num = 5, 
+                  treat = 'treat', weights = 'weight', cluster_var = 'school_id'){
+  dataset = as.data.frame(dataset)
+  lm_list <- list()
+  se_list <- list()
+  
+  for(outcome in c('read', 'math', 'scie')){
+    est_ols <- list()
+    var_ols <- list()
+    
+    for(pv in 1:pv_num){
+      formula <- paste0(outcome, pv, ' ~ ', treat, ' + ', covariates)
+      lm_model <- lm(formula, data = dataset, weights = weight)
+      est_ols[[pv]] <- tidy(lm_model)$estimate
+      var_ols[[pv]] <- diag(vcovCL(lm_model, cluster = dataset[, cluster_var]))
+      names(est_ols[[pv]]) <- names(var_ols[[pv]])
+      #var_ols[pv] <- vcovHC(lm_model, type="HC1")[2,2]
+    }
+    est_out_ols <- rowMeans(simplify2array(est_ols))
+    var_samp_ols <- rowMeans(simplify2array(var_ols))
+    var_imp_ols <- lapply(est_ols, function(x){(x - est_out_ols)^2}) %>%
+      simplify2array() %>%
+      rowSums()/4
+    se_out_ols <- sqrt(var_samp_ols + (1 + 1/5)*var_imp_ols)
+    
+    lm_final <- lm(reformulate(covariates, paste0(outcome,1)), 
+                   data = dataset, weights = weight)
+    lm_final$coefficients <- est_out_ols
+    
+    lm_list[[outcome]] <- lm_final
+    se_list[[outcome]] <- se_out_ols
+  }
+    return(list(estimates = lm_list, se_cluster = se_list))
+}
+
+```
+
+# (APPENDIX) Appendix {-} 
+
+# Full Regression Tables 
+
+
+
+```{r models-mex, results = 'asis'}
+ols_mex_pre <- rubin_lm(pisa_mex, 'mom_ed + dad_ed + female + early_ed +cultural_pos + home_ed + age + year')
+
+
+ols_mex_post <- rubin_lm(pisa_mex, 'mom_ed + dad_ed + female + early_ed +
+                cultural_pos + home_ed + age + year + non_urban +
+                wealth + home_pos + ict_res + escs + parent_isei')
+
+stargazer(c(ols_mex_pre$estimates, ols_mex_post$estimates),
+          header = F,
+          se = c(ols_mex_pre$se_cluster, ols_mex_post$se_cluster),
+          keep.stat = c('n'),
+          star.cutoffs = c(0.1, 0.05, 0.01, 0.001),
+          star.char = c('†', '*', '**', '***'),
+          no.space = T,
+          dep.var.labels.include = F,
+          column.labels = rep(c('Reading', 'Math', 'Science'), 2),
+            notes = c("\\parbox[t]{.8\\textwidth}{\\textit{Note}: †\\textit{p}<0.1; *\\textit{p}<0.05; **\\textit{p}<0.01; ***\\textit{p}<0.001. OLS estimates comparing children of return migrants in Mexico to children in Mexico. All models cluster standard errors at the school level and incorporate sampling weights.}", 
+                    "\\textit{Source}: PISA data from 2012, 2015, and 2018"), 
+          notes.label = '',
+          notes.align = 'l',
+          notes.append = F,
+          font.size = 'small',
+          table.placement = "H",
+          label = 'tab:models-mex',
+          title = 'Full table of OLS coefficients for Mexican sample')
+
+```
+
+
+```{r models-us, results = 'asis'}
+ols_us_pre <- rubin_lm(pisa_mex_us, 'mom_ed + dad_ed + female + early_ed +cultural_pos + home_ed + age + year')
+
+
+ols_us_post <- rubin_lm(pisa_mex_us, 'mom_ed + dad_ed + female + early_ed +
+                cultural_pos + home_ed + age + year + non_urban +
+                wealth + home_pos + ict_res + escs + parent_isei')
+
+stargazer(c(ols_us_pre$estimates, ols_us_post$estimates),
+          header = F,
+          se = c(ols_us_pre$se_cluster, ols_us_post$se_cluster),
+          keep.stat = c('n'),
+          star.cutoffs = c(0.1, 0.05, 0.01, 0.001),
+          star.char = c('†', '*', '**', '***'),
+          no.space = T,
+          dep.var.labels.include = F,
+          column.labels = rep(c('Reading', 'Math', 'Science'), 2),
+            notes = c("\\parbox[t]{.8\\textwidth}{\\textit{Note}: †\\textit{p}<0.1; *\\textit{p}<0.05; **\\textit{p}<0.01; ***\\textit{p}<0.001. OLS estimates comparing children of return migrants in Mexico to children of Spanish-speaking immigrants in the U.S. All models cluster standard errors at the school level and incorporate sampling weights.}", 
+                    "\\textit{Source}: PISA data from 2012, 2015, and 2018"), 
+          notes.label = '',
+          notes.align = 'l',
+          notes.append = F,
+          font.size = 'small',
+          table.placement = "H",
+          label = 'tab:models-us',
+          title = 'Full table of OLS coefficients for U.S. sample')
+
+```
+
+
+
+
+
+# Sensitivy Analysis
+
+Important variables might be correlated with both immigration (and return migration) as well as test scores. For the Mexican comparison, results are already close to 0, so this section focuses on the U.S. comparison. How strong would an unobserved confounder need to be in order to create a null effect for migration to Mexico for the 0.5 generation? I use the omitted variable bias (OVB) analysis tools of the `sensemakr` package [@cinelli_2020] to help answer this question.  
+
+
+
+```{r sens, results = 'asis', fig.cap = 'Contour plot of possible confounders of reading scores for the U.S. comparison. Contour lines represent t-values for the return migration coefficient in an OLS model for reading scores with eight additional covariates and hypothetical levels of confounding. "Unadjusted" shows the t-value of the immigration coefficient with no confounding. "10x parents\' ed." shows the t-value of the immigration coefficient after accounting for a hypothetical confounder ten times as strong as the join effects of parents\' education.'}
+
+sens_out <- sensemakr(model = lm('read1 ~ treat + mom_ed + dad_ed + female + early_ed +
+                                 cultural_pos + home_ed + age + year', data = pisa_mex_us),
+                         data = pisa_mex_us,
+                         treatment = "treat",
+                         benchmark_covariates = list("parents' ed." = c('mom_ed', 'dad_ed')),
+                         kd = 10)
+plot(sens_out, sensitivity.of = 't-value')
+```
+
+```{r sens-tab, results = 'asis', eval = F}
+ovb_minimal_reporting(sens_out, format = "latex", label = 'tab:sens-tab',
+                      caption = "Omitted Variable Bias Minimal Reporting Table")
+
+```
+
+
+I find that an unobserved confounder would need to explain more than `r round(sens_out$sensitivity_stats$rv_q * 100, 1)` percent of the residual variance of both return migration and reading scores in order to bring the estimate of immigration down to 0. Figure \@ref(fig:sens) shows that a confounder even ten times as strong as the joint effect of mother's and father's education would still not produce an insignificant coefficient. The t-value in the original model is `r round(sens_out$sensitivity_stats$t_statistic, 1)`. This plot shows that a confounder even five times as strong as mother's education (`mom_ed`) would only reduce this t-value to `r round(sens_out$bounds$adjusted_t, 1)`, still significant at the $\alpha = 5$ percent level. Results are similar for science and math scores. 
+
+
+
+```{r cluster, eval = F}
+set.seed(1859)
+kmeans_dat <- pisa_mex %>% 
+  filter(treat == 1) %>% 
+  mutate(early_ed_0 = ifelse(early_ed == 'No', 1, 0)) %>%
+  select(mom_ed, dad_ed, cultural_pos, home_ed
+        ) %>%
+  scale()
+
+kmeans_2 <- kmeans(kmeans_dat, centers = 2)
+kmeans_2$centers
+
+k.max <- 10
+wss <- sapply(1:k.max, 
+              function(k){kmeans(kmeans_dat, k, nstart=50, iter.max = 15)$tot.withinss})
+wss
+plot(1:k.max, wss,
+     type="b", pch = 19, frame = FALSE, 
+     xlab="Number of clusters K",
+     ylab="Total within-clusters sum of squares")
+
+kmeans_3 <- kmeans(kmeans_dat, centers = 3)
+kmeans_3$centers
+
+pisa_mex %>%
+  filter(treat == 1) %>%
+  mutate(cluster = kmeans_2$cluster) %>%
+  group_by(cluster) %>%
+  summarize(read = mean(read1), math = mean(math1), scie = mean(scie1))
+
+pisa_mex %>%
+  filter(treat == 1) %>%
+  mutate(cluster = kmeans_3$cluster) %>%
+  group_by(cluster) %>%
+  summarize(read = mean(read1), math = mean(math1), scie = mean(scie1))
+
+pisa_mex %>%
+  filter(treat == 0) %>%
+  summarize(read = mean(read1), math = mean(math1), scie = mean(scie1))
+```
+
+
+
+
+\newpage
+
+# References

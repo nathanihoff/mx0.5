@@ -38,7 +38,7 @@ pisa_2012 <- read_dta('/Users/nathan/Data/PISA/2012/stu.dta') %>%
 
 pisa_2012_school <- read_dta('/Users/nathan/Data/PISA/2012/sch.dta') %>%
   rename_all(toupper) %>%
-  select(CNT, SCHOOLID, SC03Q01)
+  select(CNT, SCHOOLID, SC03Q01, SC01Q01)
 pisa_2012 <- left_join(pisa_2012, pisa_2012_school, by = c('CNT', 'SCHOOLID'))
 
 saveRDS(pisa_2012, here('data', 'pisa_2012.rds'))
@@ -68,7 +68,7 @@ pisa_2015 <- read_sav('/Users/nathan/Data/PISA/2015/CY6_MS_CMB_STU_QQQ.sav') %>%
          PARED, 	HISEI, 	BMMJ1, 	BFMJ2, 		ESCS, 		BELONG, UNFAIRTEACHER, SENWT)
 
 pisa_2015_school <- read_sav('/Users/nathan/Data/PISA/2015/CY6_MS_CMB_SCH_QQQ.sav') %>%
-  select(CNTSCHID, SC001Q01TA)
+  select(CNTSCHID, SC001Q01TA, SC013Q01TA)
 pisa_2015 <- left_join(pisa_2015, pisa_2015_school, by = 'CNTSCHID')
 
 saveRDS(pisa_2015, here('data', 'pisa_2015.rds'))
@@ -95,7 +95,7 @@ pisa_2018 <- read_sav('/Users/nathan/Data/PISA/2018/CY07_MSU_STU_QQQ.sav') %>%
          BELONG, BEINGBULLIED, SENWT)
 
 pisa_2018_school <- read_sav('/Users/nathan/Data/PISA/2018/CY07_MSU_SCH_QQQ.sav') %>%
-  select(CNTSCHID, SC001Q01TA)
+  select(CNTSCHID, SC001Q01TA, PRIVATESCH)
 pisa_2018 <- left_join(pisa_2018, pisa_2018_school, by = 'CNTSCHID')
 
 saveRDS(pisa_2018, here('data', 'pisa_2018.rds'))
@@ -180,7 +180,10 @@ pisa_2018 <- readRDS(here('Data', 'pisa_2018.rds')) %>%
     school_location = recode_factor(as.numeric(SC001Q01TA),
                              `1` = 'Village', `2` = 'Small Town',
                              `3` = 'Town', `4` = 'City', `5` = 'Large City'),
-    senate_weight = SENWT)
+    senate_weight = SENWT,
+    private_school = case_when(PRIVATESCH %in% c('public', 'PUBLIC') ~ 0,
+                               PRIVATESCH %in% c('private', 'PRIVATE') ~ 1)
+  )
 
 
 pisa_2015 <- readRDS(here('Data', 'pisa_2015.rds')) %>%
@@ -235,7 +238,10 @@ pisa_2015 <- readRDS(here('Data', 'pisa_2015.rds')) %>%
   school_location = recode_factor(as.numeric(SC001Q01TA),
                            `1` = 'Village', `2` = 'Small Town',
                            `3` = 'Town', `4` = 'City', `5` = 'Large City'),
-  senate_weight = SENWT)
+  senate_weight = SENWT,
+  private_school = case_when(SC013Q01TA == 1 ~ 0,
+                             SC013Q01TA == 2 ~ 1)
+  )
 
 
 
@@ -307,7 +313,10 @@ pisa_2012 <- pisa_2012 %>%
     school_belonging = standardize(BELONG),
     unfair_teacher_2012 = ST86Q05,
     school_location = as_factor(SC03Q01),
-    senate_weight = SENWGT_STU*5)
+    senate_weight = SENWGT_STU*5,
+    private_school = case_when(SC01Q01 == 1 ~ 0,
+                               SC01Q01 == 2 ~ 1)
+    )
 
 
 
@@ -324,7 +333,8 @@ new_vars <- c('id', 'year', 'country', 'weight', 'birth_country', 'mom_country',
               'ict_res', 'parent_ed_years', 	'parent_isei', 	
               'mom_isei', 	'dad_isei', 	'family_structure', 	'escs', 	
               'school_belonging', 	'bullied', 	'unfair_teacher', 	'unfair_teacher_2012',
-              'school_location', 'senate_weight', 'parent_ed_fct', 'mom_ed_fct', 'dad_ed_fct')
+              'school_location', 'senate_weight', 'parent_ed_fct', 'mom_ed_fct', 'dad_ed_fct',
+              'private_school')
 
 
 pisa <- bind_rows(
