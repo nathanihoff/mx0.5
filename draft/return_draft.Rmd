@@ -37,11 +37,12 @@ csl: apa.csl
 # csl: american-sociological-association.csl
 
 title: "Strangers in the Homeland? The Academic Performance of Children of Return Migrants in Mexico"
+subtitle: "ASA 2022 Submission"
 author: |
   | Nathan I. Hoffmann
   | Department of Sociology, UCLA
 
-abstract: "The number of return migrants from the U.S. to Mexico has swelled in recent years, and yet we know little about the academic performance of the over 500,000 U.S.-born children who have accompanied them. This paper harnesses PISA test score data to compare U.S.-born children of return migrants in Mexico to two groups: Mexican-born students in Mexico, and students in the U.S. born to Spanish-speaking immigrant parents. Contrary to previous work highlighting the academic struggles faced by children of return migrants, these adolescents attain higher PISA scores than their Mexican-born counterparts. This advantage persists in models that control for both pre- and post-migration family characteristics. However, these adolescents' scores are much lower than similar youths in the U.S. Controlling for variables related to immigrant selection does little to change estimates of disparities."
+abstract: "The number of return migrants from the U.S. to Mexico has swelled in recent years, and yet we know little about the academic performance of the over 500,000 U.S.-born children who have accompanied them. This paper harnesses PISA test score data to compare U.S.-born children of return migrants in Mexico to two groups: Mexican-born students in Mexico, and students in the U.S. born to Spanish-speaking immigrant parents. Contrary to previous work highlighting the academic struggles faced by children of return migrants, these adolescents attain higher PISA scores than their Mexican-born counterparts. This advantage persists in models that control for both pre- and post-migration family characteristics. However, these adolescents' scores are much lower than similar youths in the U.S., and controlling for variables related to immigrant selection barely changes estimates of disparities. Furthermore, results vary little by possible moderators. Overall, these findings suggest that these often forcibly displaced adolescents quickly assimilate to the relatively low educational standards of Mexican schools, highlighting the importance of institutional factors in the assimilation process."
 
   
 date: "`r format(Sys.time(), '%B %e, %Y')`"
@@ -227,13 +228,15 @@ rubin_means <- function(dataset, labels = c(0,1), pv_num = 5,
     }
     mean_out0 <- mean(mean_treat0)
     var_samp0 <- mean(var_treat0)
-    var_imp0 <- sum((mean_treat0 - mean_out0)^2)/4
-    sd_out0 <- sqrt(var_samp0 + (1 + 1/5)*var_imp0)
+    # var_imp0 <- sum((mean_treat0 - mean_out0)^2)/4
+    # sd_out0 <- sqrt(var_samp0 + (1 + 1/5)*var_imp0)
+    sd_out0 <- sqrt(var_samp0)
     
     mean_out1 <- mean(mean_treat1)
     var_samp1 <- mean(var_treat1)
-    var_imp1 <- sum((mean_treat1 - mean_out1)^2)/4
-    sd_out1 <- sqrt(var_samp1 + (1 + 1/5)*var_imp1)
+    # var_imp1 <- sum((mean_treat1 - mean_out1)^2)/4
+    # sd_out1 <- sqrt(var_samp1 + (1 + 1/5)*var_imp1)
+    sd_out1 <- sqrt(var_samp1)
     
     mean_list[[outcome]] <-
       data.frame(Outcome = outcome, 
@@ -843,7 +846,7 @@ alt_fig <- bind_rows(
                            levels = c('OLS', 'PSM', 'Mahalanobis', 'Optimal Full', 'IPW')))
 ```
 
-```{r alt-mods-fig, results = 'hide', fig.height = 3.5, fig.cap = "Alternate estimates comparing children of return migrants in Mexico to children in Mexico and children of Spanish-speaking immigrants in the U.S. Error bars represent 95% asymptotic confidence intervals. Models adjust for parents' education, cultural possessions, home educational resources, age, ECEC, gender, and survey year. OLS is the baseline model, PSM uses propensity score matching, Mahalnobis matches on Mahalnobis distance, Optimal Full matching implements the algorithm from Hansen and Klopfer (2006), and IPW incorporates (stabilized) inverse propbability weights."}
+```{r alt-mods-fig, results = 'hide', fig.height = 3.5, fig.cap = "Alternate estimates comparing children of return migrants in Mexico to children in Mexico and children of Spanish-speaking immigrants in the U.S. Error bars represent 95% asymptotic confidence intervals. Models adjust for parents' education, cultural possessions, home educational resources, age, ECEC, gender, and survey year. OLS is the baseline model, PSM uses propensity score matching, matches on Mahalnobis distance, Optimal Full implements the matching algorithm from Hansen and Klopfer (2006), and IPW incorporates (stabilized) inverse propbability weights."}
 alt_fig %>%
   ggplot(aes(x = sample, y = Estimate, color = Outcome)) +
   geom_point(position = position_dodge(0.2)) +
