@@ -1,0 +1,993 @@
+---
+output:
+  beamer_presentation:
+    keep_tex: no
+    incremental: no
+    toc: no
+    latex_engine: pdflatex
+    slide_level: 2
+    include:
+      in_header: ucla_beamer.tex
+    fig_width: 12.5
+
+header-includes:
+#   - \setbeameroption{show notes}   
+                        
+editor_options: 
+  chunk_output_type: console
+
+
+bibliography: "/Users/nathan/Documents/My Library.bib" 
+# csl: apa.csl
+# link-citations: yes
+# linkcolor: gray
+
+
+title: 'Strangers in the Homeland?'
+subtitle: 'The Academic Performance of Children of Return Migrants in Mexico'
+
+author: "Nathan Hoffmann"
+  
+date: "PAA 2022 Annual Meeting"
+# date: "`r format(Sys.time(), '%B %d, %Y')`"
+
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = F, warning = F, message = F, cache = T)
+options("yaml.eval.expr" = TRUE)
+
+# library(flextable)
+library(patchwork)
+library(srvyr)
+library(patchwork)
+library(cem)
+library(sandwich)
+library(lmtest)
+library(estimatr)
+library(here)
+library(knitr)
+library(kableExtra)
+library(broom)
+library(sensemakr)
+library(MatchIt)
+library(haven)
+library(tidyverse)
+
+knit_hooks$set(inline = function(x) {
+  prettyNum(x, big.mark=",")
+})
+
+
+options("yaml.eval.expr" = TRUE, scipen = 3, digits = 2)
+
+uclablue = '#2774AE'
+gray = '#808080'
+black = '#000000'
+ucla_palette = c(black, uclablue, gray)
+
+# theme_set(theme_cowplot(font_family = 'Palatino') + 
+theme_set(theme_classic(base_size = 24) + 
+            theme(legend.title=element_blank(), 
+                  panel.grid.major.y = element_line('grey80'),
+                  legend.background = element_rect(fill = "transparent"),
+                  rect = element_rect(fill = "transparent"),
+                  plot.background = element_rect(fill = "transparent", color = NA),
+                  panel.background = element_rect(fill = "transparent", color = NA)))
+# ggplot <- function(...) ggplot2::ggplot(...) + scale_color_manual(values = ucla_palette) +
+#   scale_fill_manual(values = ucla_palette)
+ggplot <- function(...) ggplot2::ggplot(...) + 
+  scale_color_brewer(palette="Dark2") +
+  scale_fill_brewer(palette="Dark2")
+update_geom_defaults("errorbar", list(size = 1.2))
+update_geom_defaults("point", list(size = 3))
+
+kable <- function(...) knitr::kable(..., format.args = list(big.mark = ","))
+```
+
+```{r load, include = F}
+pisa_full <- readRDS(here('data', 'pisa.rds')) %>%
+   filter(across(c(female,  mom_ed, dad_ed, early_ed, cultural_pos, home_ed, age),
+                ~ !is.na(.x))) %>%
+  mutate(school_id = paste0(year, school_id),
+         village = school_location == 'Village',
+         non_urban = ifelse(!is.na(school_location), school_location %in% c('Village', 'Small Town', 'Town'), NA))
+
+pisa_mex <- pisa_full %>%
+  filter(country == 'Mexico',
+         birth_country %in% c('Mexico', 'United States of America'),
+         mom_country == 'Mexico',
+         dad_country == 'Mexico') %>%
+  mutate(birth_country = ifelse(birth_country == 'United States of America', 'USA', as.character(birth_country)),
+         treat = as.numeric(birth_country == 'USA'))
+
+pisa_us <-  pisa_full %>%
+  filter((country %in% c('United States', 'United States of America') & 
+            birth_country == 'United States of America' &
+            lang == 'Spanish' &
+            mom_country == 'Another country (USA)' & 
+            dad_country == 'Another country (USA)')) %>%
+  mutate(country = 'USA',
+         birth_country = 'USA')
+
+pisa_mex_us <- bind_rows(
+    filter(pisa_mex, birth_country == 'USA'),
+    pisa_us
+) %>%
+  mutate(treat = as.numeric(country == 'Mexico'))
+
+
+pisa_full %>%
+  filter(country == 'Mexico',
+         birth_country == 'United States of America',
+         mom_country == 'Mexico', dad_country == 'Mexico') %>%
+  mutate(birth_country = ifelse(birth_country == 'United States of America', 'USA', as.character(birth_country)),
+         treat = as.numeric(birth_country == 'USA')) %>%
+  nrow()
+```
+
+```{r functions}
+rubin <- function(dataset, sample_label, covariates = NULL, pv_num = 5, 
+                  treat = 'treat', weights = 'weight', cluster_var = 'school_id'){
+  dataset = as.data.frame(dataset)
+  dim_list <- list()
+  method = ifelse(is.null(covariates), 'DIM', 'OLS')
+  
+  for(outcome in c('read', 'math', 'scie')){
+    est_ols <- rep(NA, pv_num)
+    var_ols <- rep(NA, pv_num)
+    for(pv in 1:pv_num){
+      if(is.null(covariates)){
+        formula <- paste0(outcome, pv, ' ~ ', treat)
+        } else{
+          formula <- paste0(outcome, pv, ' ~ ', treat, ' + ', covariates)
+        }
+      lm_model <- lm(formula, data = dataset, weights = weight)
+      est_ols[pv] <- tidy(lm_model)[[2,2]]
+      var_ols[pv] <- vcovCL(lm_model, cluster = dataset[, cluster_var])[2,2]
+      #var_ols[pv] <- vcovHC(lm_model, type="HC1")[2,2]
+    }
+    est_out_ols <- mean(est_ols)
+    var_samp_ols <- mean(var_ols)
+    var_imp_ols <- sum((est_ols - est_out_ols)^2)/4
+    se_out_ols <- sqrt(var_samp_ols + (1 + 1/5)*var_imp_ols)
+    
+    dim_list[[outcome]] <-
+      data.frame(method = method,
+                 sample = sample_label,
+                 Outcome = outcome, 
+                 Estimate = est_out_ols,
+                 se = se_out_ols)
+  }
+  dim_list %>%
+    bind_rows() %>%
+    mutate(Outcome = recode_factor(Outcome,
+                                 'read' = 'Reading',
+                                 'math' = 'Math',
+                                 'scie' = 'Science')) %>%
+    return()
+}
+
+moderator_p <- function(df, cat1, cat2){
+  out_list <- list()
+  for(outcome in unique(df$Outcome)){
+    b1 <- with(df, Estimate[sample == cat1 & Outcome == outcome])
+    se1 <- with(df, se[sample == cat1 & Outcome == outcome])
+    b2 <- with(df, Estimate[sample == cat2 & Outcome == outcome])
+    se2 <- with(df, se[sample == cat2 & Outcome == outcome]) 
+    
+    z <- (b1 - b2)/sqrt(se1^2 + se2^2)
+    p <- round(2*(1 - pnorm(abs(as.numeric(z)))), 3)
+    
+    out_list[[outcome]] <- data.frame(Outcome = outcome, dif = b1-b2, z = z, p = p)
+  }
+  return(bind_rows(out_list))
+}
+  
+  
+
+rubin_means <- function(dataset, labels = c(0,1), pv_num = 5, 
+                  treat = 'treat', weights = 'weight', cluster_id = 'school_id'){
+  dataset <- as_survey_design(dataset, 
+                              ids = cluster_id,
+                              weights = weights)
+  mean_list <- list()
+  
+  for(outcome in c('read', 'math', 'scie')){
+    mean_treat0 <- rep(NA, pv_num)
+    mean_treat1 <- rep(NA, pv_num)
+    var_treat0 <- rep(NA, pv_num)
+    var_treat1 <- rep(NA, pv_num)
+    
+    for(pv in 1:pv_num){
+      
+      summary_df <- dataset %>%
+        group_by(treat) %>%
+        summarize(mean = survey_mean(!!sym(paste0(outcome, pv))),
+                  var = survey_var(!!sym(paste0(outcome, pv))))
+      
+      mean_treat0[pv] <- summary_df[[1,2]]
+      mean_treat1[pv] <- summary_df[[2,2]]
+      
+      var_treat0[pv] <- summary_df[[1,4]]
+      var_treat1[pv] <- summary_df[[2,4]]
+      
+    }
+    mean_out0 <- mean(mean_treat0)
+    var_samp0 <- mean(var_treat0)
+    # var_imp0 <- sum((mean_treat0 - mean_out0)^2)/4
+    # sd_out0 <- sqrt(var_samp0 + (1 + 1/5)*var_imp0)
+    sd_out0 <- sqrt(var_samp0)
+    
+    mean_out1 <- mean(mean_treat1)
+    var_samp1 <- mean(var_treat1)
+    # var_imp1 <- sum((mean_treat1 - mean_out1)^2)/4
+    # sd_out1 <- sqrt(var_samp1 + (1 + 1/5)*var_imp1)
+    sd_out1 <- sqrt(var_samp1)
+    
+    mean_list[[outcome]] <-
+      data.frame(Outcome = outcome, 
+                 label = c(labels[1], labels[2]),
+                 n = c(nrow(filter(dataset, treat==0)), nrow(filter(dataset, treat==1))),
+                 Mean = c(mean_out0, mean_out1),
+                 SD = c(sd_out0, sd_out1)
+                 )
+  }
+  mean_list %>%
+    bind_rows() %>%
+    mutate(Outcome = recode_factor(Outcome,
+                                 'read' = 'Reading',
+                                 'math' = 'Math',
+                                 'scie' = 'Science')) %>%
+    return()
+}
+
+
+stacked_bar <- function(data, x, fill){
+  data %>%
+    filter(!is.na(!!sym(x)) & !is.na(!!sym(fill))) %>%
+    count(!!sym(x), !!sym(fill)) %>%
+    ggplot(aes(x = !!sym(x), y = n, fill = !!sym(fill))) +
+    geom_bar(position='fill', stat = 'identity') +
+    theme(axis.text.x = element_text(angle = -30)) +
+    labs(title = fill)
+}
+
+```
+
+# Introduction
+
+## Introduction  
+
+\center ![](return_graph.png){height=80%} 
+
+\note{
+Due to both changing economic conditions and rising deportations, millions of Mexican migrants in the U.S. have returned to Mexico in recent years. This graph from Pew shows that net migration from Mexico to the U.S. was negative for much of the past three decades.
+}
+
+## Introduction
+```{r}
+data.frame(Year = c('2000', '2010', '2020'),
+           count = c(258, 570, 500)) %>%
+  ggplot(aes(x = Year, y = count)) + # , group = 1)) +
+  geom_col(color = uclablue, fill = uclablue) +
+  #geom_line(color = uclablue) + geom_point(color = uclablue) +
+  ylim(c(0, 600)) +
+  labs(y = 'Count (thousands)',
+      title = 'U.S.-born minors in the Mexican census')
+```
+
+
+\note{Significant numbers of children have accompanied these return migrants. As shown here, in 2000, the Mexican census counted 258,000 U.S.-born minors. By 2010, this had more than doubled to 570,000. This number has remained fairly steady in the years since.
+}
+
+## Introduction
+- Abundance of research on return migration, but few on the children who accompany returnees
+- About 500,000 American-born minors live in Mexico (~2 percent of school enrollment) [@masferrer_2021_return, p. 39]
+- *0.5 generation*: children of Mexican immigrants who are born in the U.S. and later migrate to Mexico [@zuniga_2018_ninas]
+
+\note{\begin{itemize}
+\item There has been an abundance of research on return migration, and yet few studies focus on children who accompany these returnees. 
+\item Current estimates suggest that about 500,000 American-born minors live in Mexico, constituting about 2 percent of school enrollment. 
+\item Following Víctor Zúñiga and colleagues, I refer to these children as the "0.5 generation": children of Mexican immigrants who are born in the U.S. and later migrate to Mexico.  
+\end{itemize}}
+
+## Introduction
+- What does it mean to assimilate into a society where ethnic, cultural, and legal barriers are at a minimum?
+- Diverging findings in previous, mainly qualitative, studies of these children in Mexico
+- Predominant narrative of struggles: difficulty with written language, invisibility to teachers, stigma and exclusion from other youths
+- @bybee_2020_estamos: teachers characterize them as "star students," capitalizing on their binational and bicultural assets
+
+\note{\begin{itemize}
+\item What does it mean to assimilate into a society where ethnic, cultural, and legal barriers are at a minimum? 
+\item Assimilation theory might predict a smooth transition, and yet the small-scale studies that exist present diverging findings. 
+\item The predominant narrative is of struggles in school: difficulty with written language, invisibility to teachers, and stigma and exclusion from other youths. But not all research depicts these adolescents as strangers in their homeland. 
+\item Despite these youths' challenges in adjusting to daily life in Mexico, teachers characterize them as "star students" in their academic achievement, capitalizing on their binational and bicultural assets.
+\end{itemize}}
+
+## Introduction
+**Research questions**  
+
+- Is the typical experience of these students of academic advantage or disadvantage? 
+- If disparities exist, is this due to the challenges of migration or a process of migrant selection?
+
+
+\note{\begin{itemize}
+\item How can we reconcile this divergence? This paper addresses two research questions. First, is the typical experience of these students of academic advantage or disadvantage? 
+\item And if disparities exist, is this due to the challenges of migration or a process of migrant selection?
+\end{itemize}}
+
+
+<!-- - Pew estimates that from 2005 to 2010, 1.39 million Mexican immigrants returned to Mexico from the U.S., and 710,000 returned between 2013 and 2018 -->
+<!-- - In large part deportations of undocumented immigrants, but 45 percent return voluntarily [@warren_2020_reverse] -->
+<!-- - Precarious economic conditions in the U.S. and a stabilizing Mexican economy have increased incentives to return -->
+
+<!-- \note{ -->
+<!-- The Mexico-U.S. migration system has changed dramatically in the 21st century. After decades of high migration from Mexico to the U.S., Pew estimates that from 2005 to 2010, 1.39 million Mexican immigrants returned to Mexico from the U.S., and 710,000 returned between 2013 and 2018. -->
+<!-- } -->
+
+# Empirical Expectations
+## Empirical Expectations
+**Why might these adolescents be *disadvantaged*?**
+
+- Neoclassical economics: Parents return due to negative factors, such as unemployment, deportation
+- Transnationalism: Alienation and exclusion in the "home" society 
+- Institutionalism: lack of infrastructure for investment [@hagan_2020_return, p. 539].
+- @cassarino_2004_theorising: deportation means that migrants not "ready and willing" to migrate  
+- **Rough re-entry hypothesis**: Compared to Mexican-born children in Mexico, children of return migrants attain lower PISA scores.
+
+\note{\begin{itemize}
+\item Previous theoretical work suggests why we might see diverging findings. I first consider reasons why these adolescents might be disadvantaged. Neoclassical economics suggests that return migrant families may not have found lucrative employment in the host country. 
+\item Even in cases where they have, a transnationalist perspective emphasizes that alienation and exclusion in the "home" society can still afflict return migrants and their children as they struggle with their identities. 
+\item Institutions for investment and activation of resources gained in the U.S. may also be lacking. 
+\item And in the words of Cassarino's resource-mobilization framework, migrants who are not ready and willing to migrate are less likely to possess the resources to ease re-entry into Mexican society. 
+\item These expectations lead to what I call the rough re-entry hypothesis: Compared to Mexican-born children in Mexico, children of return migrants attain lower PISA scores.  
+\end{itemize}}
+
+
+## Empirical Expectations
+**Why might these adolescents be *advantaged*?**
+
+- NELM: return migration implies economic success, with parents accumulating sufficient resources to lead a comfortable life in Mexico
+- Ready and willing to migrate (Cassarino 2004)
+- Benefit from resources such as dual nationality, bicultural facility, and experience in better resourced schools (Gándara & Jensen 2021) 
+- Assimilation theory: absence of most social markers of difference $\implies$ smooth integration (Alba & Nee 2003)  
+- **Star student hypothesis**: Compared to Mexican-born children in Mexico, children of return migrants attain higher PISA scores.
+
+\note{\begin{itemize}
+\item On the other hand, why might these adolescents be advantaged? The New Economics of Labor Migration highlights how voluntary return migration can be evidence of economic success, with parents accumulating sufficient resources to lead a comfortable life in Mexico. 
+\item Following Cassarino, if the family is ready and willing to move, they are more likely to be well supported upon return to the parents' country of origin. 
+\item Scholars suggest that at least some of these children benefit from resources such as dual nationality, bicultural facility, and experience in better resourced schools. 
+\item Furthermore, in the absence of most social markers of difference, assimilation theory predicts that integration should be straightforward and rapid. 
+\item Referencing the "star student discourse" documented by Bybee et al., the star student hypothesis predicts the following: Compared to Mexican-born children in Mexico, children of return migrants attain higher PISA scores. 
+\end{itemize}}
+
+## Empirical Expectations
+**Role of return-migrant selection?**  
+
+-  For return migrants from the U.S. to Mexico, negative selection on characteristics such as education and income has predominated in recent years
+- @hernandez-leon_2020_imperfect suggest that "U.S. policies [...] effectively externalize downward assimilation to communities of origin."   
+- **Selection hypothesis**: Compared to Spanish-speaking children of immigrants in the U.S., children of return migrants in Mexico attain lower PISA scores. However, in models adjusting for family background and resources, this disparity diminishes. 
+
+\note{\begin{itemize}
+\item If the rough re-entry hypothesis is correct, then these students' challenges may be connected to return-migrant selection. For return migrants from the U.S. to Mexico, negative selection on characteristics such as education and income has predominated in recent years.
+\item Observing which migrant families both voluntarily and involuntarily return to Mexico, Hernández-León et al. suggest that "U.S. policies [...] effectively externalize downward assimilation to communities of origin." Migrants who return to Mexico from the U.S. may be those having the roughest time in the host country; hence their children are a selected group, more likely to struggle in the homeland due to disadvantage accrued before return. 
+\item I call this third set of expectations the selection hypothesis: Compared to Spanish-speaking children of immigrants in the U.S., children of return migrants in Mexico attain lower PISA scores. However, in models adjusting for family background and resources, this disparity diminishes. 
+\end{itemize}}
+
+
+
+# Data and Methods
+## Data and Methods
+- Programme for International Student Assessment (PISA) for 2012, 2015, and 2018
+  + reading, math, and science
+  + mean of 500, sd of 100
+  + each analysis performed once for each of 5 plausible values
+- Pre-migration variables: mother's and father's education (6-category ISCED), cultural possessions, home educational resources, age (15 for most respondents), early childhood education and care (ECEC), two-category gender
+- Post-migration variables:  household wealth, home possessions, home information and communication technology (ICT) resources, and an index of economic, social and cultural status, highest parental occupational status measured (ISEI), urban locality
+
+\note{\begin{itemize}
+\item Data for this study come from the pooled 2012, 2015, and 2018 waves of the Programme for International Student Assessment, or PISA, a standardized test administered to 15-year-olds in dozens of countries worldwide. 
+\item for reading, math and science. 
+\item Each subject score has a global mean of 500 and standard deviation of 100. In the following slides, results are reported in terms of standard deviation. 
+\item I perform each analysis once for each of five plausible values provided in the data, combining estimates in accordance with the PISA technical report. 
+\item I include pre-migration and post-migration variables separately, which I describe in greater detail in the paper. I can go into greater detail in the Q and A.
+\end{itemize}}
+
+
+## Data and Methods
+- What is migrant success? Importance of comparison group
+- Main sample: `r sum(pisa_mex$treat == T)` children born to two Mexican parents in the U.S., now living in Mexico
+- Mexico comparison: `r sum(pisa_mex$treat == F)` children of non-immigrants in Mexico
+    + Descriptive assessment of Mexican educational context
+- U.S. comparison: `r sum(pisa_mex_us$treat == F)` Spanish-speaking children of two immigrants in the U.S.
+    + Counterfactual: what would have happened to these children had they not migrated to Mexico?
+    + PISA data for the U.S. does not allow disaggregating by parental origin, children of Mexican immigrants predominate among Spanish-speaking youth and obtain similar scores on academic assessments
+
+\note{\begin{itemize}
+\item For the 0.5 generation, how do we define "positive" or "negative" outcomes in school? Much depends on the comparison group. 
+\item The main sample consists of 465 children born to two Mexican parents in the U.S., now living in Mexico.
+\item The first analyses compare them to 40,710 local Mexican children without migration backgrounds, 
+\item descriptively placing U.S.-born children of Mexican return migrants in the Mexican educational context. 
+\item Second, I compare these children to a suitable group in the U.S.: 926 Spanish-speaking children of immigrants in the U.S. 
+\item The target here is a counterfactual, causal estimand: the scores these children would have obtained in the U.S. had they not migrated to Mexico. 
+\item Unfortunately, PISA data for the U.S. does not allow disaggregating by parental origin, but previous research shows that children of Mexican immigrants predominate among Spanish-speaking youth and obtain similar scores on academic assessments as children of immigrants from other Spanish-speaking countries.
+\end{itemize}}
+
+
+## Data and Methods
+- Difference-in-means and OLS regression estimates 
+- Adjusting for pre-, then post-migration characteristics (mediators)
+- Analysis of moderators
+- HC1 clustered standard errors at the school level, sampling weights
+- Sensitivity analysis with other estimation methods
+
+\note{\begin{itemize}
+\item I present difference-in-means and OLS regression estimates 
+\item that adjust for pre- and then post-migration characteristics. 
+\item I also assess the influence of moderators. 
+\item All analyses use HC1 clustered standard errors at the school level and sampling weights. 
+\item I also conduct sensitivity analysis with other estimation methods, though I do not present those results here.
+\end{itemize}}
+
+
+```{r stats, eval = F}
+bind_rows(
+  rubin_means(pisa_mex, labels = c('Mexico', 'U.S.')) %>%
+    mutate(Country = 'Mexico') %>%
+    select(Outcome, `Country of Residence` = Country, `Birth Country` = label, n, Mean, SD),
+  rubin_means(pisa_mex_us, labels = c('U.S.', 'Mexico')) %>%
+    filter(label == 'U.S.') %>%
+    mutate(`Birth Country` = 'U.S.') %>%
+    select(Outcome, `Country of Residence` = label, `Birth Country`, n, Mean, SD)
+  ) %>%
+  select(-SD) %>% 
+  pivot_wider(names_from = Outcome, values_from = Mean) %>%
+  select(`Country of Residence`, `Birth Country`, n) %>%
+  kable(booktabs = T, linesep = "")
+```
+
+# Results
+## Mexico Comparisons
+
+
+```{r models, include = F, results = 'hide'}
+dim_fig_mex_us <-
+  bind_rows(rubin(pisa_mex, 'DIM'),
+          rubin(pisa_mex, 'OLS (pre-migration)', 'mom_ed + dad_ed + female + early_ed +cultural_pos + home_ed + age + year'),
+          rubin(pisa_mex, 'OLS (pre- & post-migration)',
+                covariates = 'mom_ed + dad_ed + female + early_ed +
+                cultural_pos + home_ed + age + year + non_urban +
+                wealth + home_pos + ict_res + escs + parent_isei')
+) %>%
+  mutate(Outcome = recode_factor(Outcome,
+                                 'read' = 'Reading',
+                                 'math' = 'Math',
+                                 'scie' = 'Science'),
+            sample = factor(sample, 
+                            levels = c('DIM', 'OLS (pre-migration)', 'OLS (pre- & post-migration)')))
+
+
+```
+
+```{r dim-mex, results = 'hide'}
+dim_fig_mex_us %>%
+  ggplot(aes(x = sample, y = Estimate/100, color = Outcome)) +
+  geom_point(position = position_dodge(0.2)) +
+  geom_errorbar(aes(ymin = Estimate/100 - 1.96*se/100, ymax = Estimate/100 + 1.96*se/100),
+                width = 0, alpha = 1, position = position_dodge(0.2)) +
+  geom_hline(yintercept = 0) +
+  labs(x = '', y = 'Estimated difference in PISA score') +
+  theme(#axis.text.x=element_text(angle=-15),
+        legend.justification=c(1,0), 
+        legend.position=c(.4,.7))
+
+
+
+```
+
+\note{
+Let's move on to results. This first figure compares PISA scores of children of return migrants in Mexico to the local Mexican-born sample, with 95 percent confidence intervals. On the left, difference-in-means estimates show that children of return migrants perform somewhat better in all three subjects, but results are significant only for math, in orange, where their advantage amounts to one-fifth of a standard deviation. Turning to the middle set of estimates, the results barely change when pre-migration characteristics are included in OLS regressions. Hence the data provide partial support for the star student hypothesis: despite the travails of migration, these children are not academically disadvantaged compared to their Mexican peers, attaining somewhat higher scores, at least in math. The estimates on the right account for post-migration individual characteristics as well. Since estimates do not move much, this suggests that individual factors do not account for the slight advantage enjoyed by the 0.5 generation in school.
+}
+
+## U.S. Comparisons
+
+```{r dim-us, results = 'hide'}
+dim_fig_us <-
+  bind_rows(rubin(pisa_mex_us, 'DIM', weights = 'senate_weight'),
+          rubin(pisa_mex_us, 'OLS (pre-migration)', 
+                'mom_ed + dad_ed + female + early_ed +cultural_pos + home_ed + age + year',
+                weights = 'senate_weight'),
+          rubin(pisa_mex_us, 'OLS (pre- & post-migration)',
+                covariates = 'mom_ed + dad_ed + female + early_ed +
+                cultural_pos + home_ed + age + year + 
+                wealth + home_pos + ict_res + escs + parent_isei', 
+                weights = 'senate_weight')
+          ) %>%
+  mutate(Outcome = recode_factor(Outcome,
+                                 'read' = 'Reading',
+                                 'math' = 'Math',
+                                 'scie' = 'Science'),
+            sample = factor(sample, 
+                            levels = c('DIM', 'OLS (pre-migration)', 'OLS (pre- & post-migration)')))
+
+dim_fig_us %>%
+  ggplot(aes(x = sample, y = Estimate/100, color = Outcome)) +
+  geom_point(position = position_dodge(0.2)) +
+  geom_errorbar(aes(ymin = Estimate/100 - 1.96*se/100, ymax = Estimate/100 + 1.96*se/100),
+                width = 0, alpha = 1, position = position_dodge(0.2)) +
+  geom_hline(yintercept = 0) +
+  labs(x = 'Method', y = '') +
+  theme(#axis.text.x=element_text(angle=-15),
+        legend.justification=c(1,0), 
+        legend.position=c(.45,.05))
+```
+
+\note{
+This figure conducts the same analysis, but with the U.S. pseudo-control group instead. Unadjusted difference-in-means estimates on the left show stark negative differences, amounting to math scores one-fifth of a standard deviation lower than U.S. counterparts, as shown in orange, and reading and science disparities closer to half of a standard deviation, as shown in green and purple. Despite being star students in Mexico, these children struggle on PISA exams much more than children of Spanish-speaking immigrants in the U.S. And, as shown in the middle set of estimates, controlling for pre-migration characteristics only slightly reduces disparities. Might post-migration experiences play a role? As shown on the right, estimated disparities become even more negative in models that control for both pre and post migration characteristics. This suggests that it is neither selection nor the post-migration material experience of the 0.5 generation that accounts for their lower achievement compared to the U.S. Rather, it is likely that institutional factors play a key role.  
+}
+
+
+## Moderators
+- How are results moderated by gender, age at migration, and rural vs. urban locality?
+- For within-Mexico comparisons, results do not vary
+    + even when excluding 1/3 of the main sample migrated before the age of 1
+- For U.S. comparisons, greater disparities for villages (-1 sd)
+
+
+\note{\begin{itemize}
+\item I next consider whether results are moderated by gender, age at migration, and rural vs. urban locality. For the sake of time I do not present estimates here, but they are in the full paper. 
+\item For within-Mexico comparisons, results do not vary by moderators. 
+\item This is even true when I exclude from the main sample the one-third of respondents who migrated to Mexico before the age of 1. 
+\item For the U.S. comparisons, results are also robust to moderators. The only exception is for villages: if I compare only adolescents living in villages, the estimated effect of return migration into these rural areas is especially stark. Disparities become more negative, up to one standard deviation. 
+\end{itemize}}
+
+# Conclusion
+- Previous studies have mixed findings, with negative outcomes predominating
+- **Star student hypothesis**: slight advantage compared to Mexican youths
+- **Rough re-entry hypothesis**: stark disadvantage compared to similar U.S. adolescents
+- **Selection hypothesis**: Controlling for pre- or post-migration characteristics does not change conclusions
+- Little variation by moderators
+
+\note{\begin{itemize}
+\item In sum, this paper aimed to quantify the educational situation of U.S.-born children of return migrants in Mexico. Previous studies yielded mixed findings, with negative outcomes predominating. I tested three empirical expectations generated from previous work. 
+\item First, the star student hypothesis held for Mexico comparisons: the 0.5 generation retains a slight advantage compared to Mexican youths. 
+\item However, when I change the reference group to similar youths in the U.S., I find support for the rough re-entry hypothesis: children of return migrants in Mexico face a stark disadvantage compared to similar children in the U.S. 
+\item I find little support for the selection hypothesis: controlling for pre- or post-migration characteristics does not change conclusions. 
+\item There is also little variation by moderators.
+\end{itemize}}
+
+
+## Conclusion
+- Corrective to narrative on 0.5 generation: advantaged compared to Mexican students
+- Importance of comparison group and institutions: focus on only one country fails to capture the importance of institutional context
+    + Mexican schools under-resourced
+- Smooth assimilation, but to relatively low educational average
+- Another way U.S.-citizen children of undocumented immigrants are harmed by punitive immigration policy
+
+\note{\begin{itemize}
+\item In conclusion, this study constitutes an important corrective to literature on the 0.5 generation in Mexico. First, by showing that the educational situation of these students is one of advantage rather than disadvantage when compared to other students in Mexico, this study contradicts much previous research on this group that depicts these students as strangers in the homeland who struggle academically. 
+\item Second, this paper shows that studies that focus on only one country fail to capture the importance of institutional context. The U.S. comparisons presented here show that migration from more- to less-resourced educational contexts can entail unfortunate consequences for children's educational outcomes. 
+\item In this case, where few social markers of difference exist, smooth assimilation does occur. But it is to the relatively low educational average of Mexican schools. 
+\item Since many of these returns result from deportation of parents, this paper documents yet another way that U.S.-citizen children of undocumented immigrants are harmed by punitive immigration policy. 
+\end{itemize}}
+
+## Conclusion
+\begin{center} 
+  \huge{\textcolor{uclablue}{Thank You}}  
+    \\
+\end{center}
+
+\begin{center} 
+  Nathan I. Hoffmann \\
+  \textcolor{uclablue}{nathanihoff@ucla.edu}
+\end{center}
+
+\note{Thank you, and I look forward to your feedback}
+
+
+
+
+``` {=latex}
+\end{frame}
+\appendix
+\begin{frame}<0| handout:0>
+```
+
+
+
+# Variables
+- Pre-migration variables: mother's and father's education (6-category ISCED), cultural possessions, home educational resources, age (15 for most respondents), early childhood education and care (ECEC), two-category gender
+- Post-migration variables:  composite variables for household wealth, home possessions, home information and communication technology (ICT) resources, and an index of economic, social and cultural status; highest parental occupational status measured (ISEI), urban locality
+
+\note{
+
+}
+
+# Mexico Comparisons
+```{r mod-desc-mex}
+plot_female <- pisa_mex %>%
+  group_by(treat) %>%
+  count(female, wt = weight) %>%
+  mutate(treat = ifelse(treat == 1, "0.5 gen.", "Mexico"),
+         female = ifelse(female == 1, 'Female', 'Male')) %>%
+  ggplot(aes(x = treat, y = n, fill = female)) +
+  geom_bar(position='fill', stat = 'identity') +
+  geom_text(aes(label = female), size = 3, 
+            position = position_fill(vjust = 0.5), color = 'white') +
+  labs(x = '', y = 'Proportion', 
+       title = 'Gender') + 
+  theme(legend.position = "none")
+
+plot_location <- pisa_mex %>%
+  filter(!is.na(school_location)) %>%
+  group_by(treat) %>%
+  count(school_location, wt = weight) %>%
+  mutate(treat = ifelse(treat == 1, "0.5 gen.", "Mexico")) %>%
+  ggplot(aes(x = treat, y = n, fill = school_location)) +
+  geom_bar(position='fill', stat = 'identity') +
+  geom_text(aes(label = school_location), size = 2.5,
+            position = position_fill(vjust = 0.5), color = 'white') +
+  labs(x = '', y = '', 
+       title = 'School Location') + 
+  theme(legend.position = "none")
+
+age_arrival_df <- pisa_mex %>%
+  filter(treat == 1, !is.na(age_arrival)) %>%
+   count(age_arrival, wt = weight) %>%
+  mutate(prop = n /sum(.[,'n']))
+
+plot_age_arrival <- age_arrival_df %>%
+  ggplot(aes(x = age_arrival, y = prop)) +
+  geom_col(width = .99) +
+  labs(x = '', y = '', 
+       title = 'Age at Arrival')
+
+plot_female + plot_location + plot_age_arrival
+```
+
+\note{
+
+}
+
+## Mexico Comparisons
+```{r mod-est-mex-mods}
+controls = '+ mom_ed + dad_ed + female + early_ed + cultural_pos + home_ed + age + year'
+
+mod_df_mex_us <- bind_rows(
+  rubin(filter(pisa_mex, female == 1), 'Girls', covariates = controls),
+  rubin(filter(pisa_mex, female == 0), 'Boys', covariates = controls),
+  rubin(filter(pisa_mex, non_urban == 1), 'Non-urban', covariates = controls),
+  rubin(filter(pisa_mex, non_urban == 0), 'Urban', covariates = controls),
+  rubin(filter(pisa_mex, village == 1), 'Village', covariates = controls),
+  rubin(filter(pisa_mex, village == 0), 'Non-village', covariates = controls),
+  rubin(filter(pisa_mex, age_arrival < 5 | treat == 0), 'Under 5', covariates = controls),
+  rubin(filter(pisa_mex, age_arrival >= 5 | treat == 0), '5 and older', covariates = controls),
+  rubin(filter(pisa_mex, age_arrival < 10 | treat == 0), 'Under 10', covariates = controls),
+  rubin(filter(pisa_mex, age_arrival >= 10 | treat == 0), '10 and older', covariates = controls)
+  # rubin(filter(pisa_mex, private_school == 1), 'Private', covariates = controls),
+  # rubin(filter(pisa_mex, private_school == 0), 'Public', covariates = controls)
+  # rubin(filter(pisa_mex, parent_ed <= 2), 'Parents w/o HS', covariates = controls),
+  # rubin(filter(pisa_mex, parent_ed > 2), 'Parents HS+', covariates = controls),
+)
+
+
+
+# moderator_p(mod_df_mex_us, 'Girls', 'Boys')
+# moderator_p(mod_df_mex_us, 'Non-urban', 'Urban')
+# moderator_p(mod_df_mex_us, 'Village', 'Non-village')
+
+```
+
+```{r mod-est-mex}
+mod_df_mex_us %>% 
+  mutate(sample = factor(sample, levels = unique(mod_df_mex_us$sample))) %>%
+  ggplot(aes(x = sample, y = Estimate/100, color = Outcome)) +
+  geom_point(position = position_dodge(0.2)) +
+  geom_errorbar(aes(ymin = Estimate/100 - 1.96*se/100, ymax = Estimate/100 + 1.96*se/100),
+                width = 0, alpha = 1, position = position_dodge(0.2)) +
+  geom_hline(yintercept = 0) +
+  labs(x = '', y = 'Difference in scores for 0.5 generation'
+       #title = 'Across moderators, the 0.5 generation performs as well or better than local Mexican students'
+       ) +
+  theme(axis.text.x=element_text(angle=-15),
+        legend.justification=c(0,0),
+        legend.position=c(0.175,.02)) 
+
+```
+
+\note{
+
+}
+
+# U.S. Comparisons
+
+```{r mex-us-compare}
+plot_cat <- function(var_name, title){
+  pisa_mex_us %>%
+      mutate(treat = ifelse(treat == 1, '0.5 Generation', 'U.S. Spanish-Speaking')) %>%
+      filter(!is.na(!!sym(var_name))) %>%
+      group_by(treat, !!sym(var_name)) %>%
+      count(wt = senate_weight) %>%
+      group_by(treat) %>%
+      mutate(prop = n /sum(n)) %>%
+      ggplot(aes(x = !!sym(var_name), y = prop, color = treat, fill = treat)) +
+      geom_col(position = 'dodge') +
+      labs(x = '', y = '', 
+           title = title)
+}
+
+plot_cont <- function(var_name, title){
+   pisa_mex_us %>%
+      mutate(treat = ifelse(treat == 1, '0.5 Generation', 'U.S. Spanish-Speaking')) %>%
+      ggplot(aes(x = !!sym(var_name), color = treat, fill = treat)) +
+      geom_histogram(aes(y=..density..,
+                     weight = senate_weight),
+                     position = 'dodge') +
+  labs(x = '', y = '', title = title)
+}
+
+plot_cat('early_ed', 'Early Childhood Education') + 
+  plot_cat('parent_ed_years', "Parent's Years of Education") + 
+  scale_x_continuous(breaks = unique(pisa_mex_us$parent_ed_years)) +
+  plot_cont('wealth', 'Wealth Composite')  +
+  plot_cont('parent_isei', 'Parent\'s Occupation (ISEI)') + 
+  plot_layout(nrow = 2, guides = 'collect')  & theme(legend.position = 'bottom')
+
+
+years_df <- as_survey_design(pisa_mex_us, ids = school_id, weights = 'senate_weight') %>%
+  group_by(treat) %>%
+  summarize(survey_mean(parent_ed_years))
+
+isei_df <- as_survey_design(pisa_mex_us, ids = school_id, weights = 'senate_weight') %>%
+  group_by(treat) %>%
+  summarize(survey_mean(parent_isei, na.rm = T))
+```
+
+\note{
+
+}
+
+## U.S. Comparisons
+
+```{r mod-est-us-mods}
+controls = 'mom_ed + dad_ed + female + early_ed + cultural_pos + home_ed + age + year'
+
+mod_df_us <- bind_rows(
+  rubin(filter(pisa_mex_us, female == 1), 'Girls', covariates = controls),
+  rubin(filter(pisa_mex_us, female == 0), 'Boys', covariates = controls),
+  rubin(filter(pisa_mex_us, non_urban == 1), 'Non-urban', covariates = controls),
+  rubin(filter(pisa_mex_us, non_urban == 0), 'Urban', covariates = controls),
+  rubin(filter(pisa_mex_us, village == 1), 'Village', covariates = controls),
+  rubin(filter(pisa_mex_us, village == 0), 'Non-village', covariates = controls),
+  rubin(filter(pisa_mex_us, age_arrival < 5 | treat == 0), 'Under 5', covariates = controls),
+  rubin(filter(pisa_mex_us, age_arrival >= 5 | treat == 0), '5 and older', covariates = controls),
+  rubin(filter(pisa_mex_us, age_arrival < 10 | treat == 0), 'Under 10', covariates = controls),
+  rubin(filter(pisa_mex_us, age_arrival >= 10 | treat == 0), '10 and older', covariates = controls)
+  # rubin(filter(pisa_mex_us, private_school == 1), 'Private', covariates = controls),
+  # rubin(filter(pisa_mex_us, private_school == 0), 'Public', covariates = controls)
+)
+
+# moderator_p(mod_df_us, 'Girls', 'Boys')
+# urban_us_p <- moderator_p(mod_df_us, 'Non-urban', 'Urban')[,4]
+# village_us_p <- moderator_p(mod_df_us, 'Village', 'Non-village')[,4]
+
+non_urban_df <- rubin_means(filter(pisa_mex_us, non_urban == 1), labels = c('Mexico', 'U.S.'))
+urban_df <- rubin_means(filter(pisa_mex_us, non_urban == 0), labels = c('Mexico', 'U.S.'))
+# rubin_means(pisa_mex_us, labels = c('Mexico', 'U.S.')) 
+```
+
+```{r mod-est-us}
+mod_df_us %>% 
+  mutate(sample = factor(sample, levels = unique(mod_df_us$sample))) %>%
+  ggplot(aes(x = sample, y = Estimate/100, color = Outcome)) +
+  geom_point(position = position_dodge(0.2)) +
+  geom_errorbar(aes(ymin = Estimate/100 - 1.96*se/100, ymax = Estimate/100 + 1.96*se/100),
+                width = 0, alpha = 1, position = position_dodge(0.2)) +
+  geom_hline(yintercept = 0) +
+  labs(x = '', y = 'Difference in scores for 0.5 generation'
+       #title = 'Across moderators, the 0.5 generation in Mexico underperforms compared to their U.S. counterparts'
+       ) +
+  theme(axis.text.x=element_text(angle=-15),
+        legend.justification=c(0,0),
+        legend.position=c(0.175,.02)) 
+```
+
+
+\note{
+
+}
+
+
+# Sensitivy Analysis
+
+
+```{r alt-mods}
+controls <- "mom_ed + dad_ed + female + early_ed + cultural_pos + home_ed + age + year"
+
+# cem_mx1 <- MatchIt::matchit(treat ~ mom_ed + dad_ed + female + early_ed +
+#                             cultural_pos + home_ed + age + year,
+#                             data = pisa_mex,
+#                             method = 'cem',
+#                             s.weights = pisa_mex$weight)
+# 
+# cem_mx2 <- MatchIt::matchit(treat ~ parent_ed + female + early_ed +
+#                             cultural_pos + home_ed + age + year,
+#                             data = pisa_mex,
+#                             method = 'cem',
+#                             s.weights = pisa_mex$weight,
+#                             cutpoints = list(parent_ed = 3)) 
+
+psm_mx <- MatchIt::matchit(treat ~ mom_ed + dad_ed + female + early_ed +
+                           cultural_pos + home_ed + age + year,
+                           data = pisa_mex,
+                           method = 'nearest',
+                           distance = 'glm',
+                           s.weights = pisa_mex$weight) 
+
+mahvars_mx <- MatchIt::matchit(treat ~ mom_ed + dad_ed + female + early_ed +
+                           cultural_pos + home_ed + age + year,
+                           data = pisa_mex,
+                           method = 'nearest',
+                           distance = 'mahalanobis',
+                           s.weights = pisa_mex$weight) 
+
+full_mx <- MatchIt::matchit(treat ~ mom_ed + dad_ed + female + early_ed +
+                           cultural_pos + home_ed + age + year,
+                           data = pisa_mex,
+                           method = 'full',
+                           s.weights = pisa_mex$weight) 
+
+# IPW
+pi.out = glm(treat ~ mom_ed + dad_ed + female + early_ed +
+               cultural_pos + home_ed + age + year,
+             data = pisa_mex,
+             family="binomial"(link=logit))
+ps = pi.out$fit
+D = pisa_mex$treat
+PrD = mean(D)
+IPW_mex = (D*PrD+(1-D)*(1-PrD))/(D*ps+(1-D)*(1-ps))
+
+# plot(density(pi.out$fit[D==1], weight=IPW[D==1]/sum(IPW[D==1])), lwd=2, main="Distribution of pscores: Weighted")
+# lines(density(pi.out$fit[D==0], weight=IPW[D==0]/sum(IPW[D==0])),lwd=2, lty=2)
+# legend("topright", legend=c("treated","controls"), lty=c(1,2), lwd=2)
+
+
+          
+alt_fig_mex <- bind_rows(
+  rubin(pisa_mex, 'OLS', controls),
+  rubin(match.data(psm_mx), 'PSM', weights = 'weights'),
+  rubin(match.data(mahvars_mx), 'Mahalanobis', weights = 'weights'),
+  rubin(match.data(full_mx), 'Optimal Full', weights = 'weights'),
+  rubin(pisa_mex, 'IPW', weights = IPW_mex))
+
+
+# cem_us1 <- MatchIt::matchit(treat ~ mom_ed + dad_ed + female + early_ed +
+#                             cultural_pos + home_ed + age + year,
+#                             data = pisa_mex_us,
+#                             method = 'cem',
+#                             s.weights = pisa_mex_us$weight)
+# cem_us_data1 <- MatchIt::match.data(cem_us1)
+# 
+# cem_us2 <- MatchIt::matchit(treat ~ parent_ed + female + early_ed +
+#                             cultural_pos + home_ed + age + year,
+#                             data = pisa_mex_us,
+#                             method = 'cem',
+#                             s.weights = pisa_mex_us$weight,
+#                             cutpoints = list(parent_ed = 3)) 
+# cem_us_data2 <- MatchIt::match.data(cem_us2)
+
+psm_us <- MatchIt::matchit(treat ~ mom_ed + dad_ed + female + early_ed +
+                           cultural_pos + home_ed + age + year,
+                           data = pisa_mex_us,
+                           method = 'nearest',
+                           distance = 'glm',
+                           s.weights = pisa_mex_us$weight)
+
+mahvars_us <- MatchIt::matchit(treat ~ mom_ed + dad_ed + female + early_ed +
+                           cultural_pos + home_ed + age + year,
+                           data = pisa_mex_us,
+                           method = 'nearest',
+                           distance = 'mahalanobis',
+                           s.weights = pisa_mex_us$weight) 
+
+full_us <- MatchIt::matchit(treat ~ mom_ed + dad_ed + female + early_ed +
+                           cultural_pos + home_ed + age + year,
+                           data = pisa_mex_us,
+                           method = 'full',
+                           s.weights = pisa_mex_us$weight) 
+
+pi.out = glm(treat ~ mom_ed + dad_ed + female + early_ed +
+               cultural_pos + home_ed + age + year,
+             data = pisa_mex_us,
+             family="binomial"(link=logit))
+ps = pi.out$fit
+D = pisa_mex_us$treat
+PrD = mean(D)
+IPW_us = (D*PrD+(1-D)*(1-PrD))/(D*ps+(1-D)*(1-ps))
+
+alt_fig_us <- bind_rows(
+  rubin(pisa_mex_us, 'OLS', controls),
+  rubin(match.data(psm_us), 'PSM', weights = 'weights'),
+  rubin(match.data(mahvars_us), 'Mahalanobis', weights = 'weights'),
+  rubin(match.data(full_us), 'Optimal Full', weights = 'weights'),
+  rubin(pisa_mex_us, 'IPW', weights = IPW_us))
+
+
+alt_fig <- bind_rows(
+    mutate(alt_fig_mex, country = 'Mexico'), 
+    mutate(alt_fig_us, country = 'U.S.')) %>%
+  mutate(Outcome = recode_factor(Outcome,
+                                 'read' = 'Reading',
+                                 'math' = 'Math',
+                                 'scie' = 'Science'),
+           sample = factor(sample,
+                           levels = c('OLS', 'PSM', 'Mahalanobis', 'Optimal Full', 'IPW')))
+```
+
+```{r alt-mods-fig}
+alt_fig %>%
+  ggplot(aes(x = sample, y = Estimate/100, color = Outcome)) +
+  geom_point(position = position_dodge(0.2)) +
+  geom_errorbar(aes(ymin = Estimate/100 - 1.96*se/100, ymax = Estimate/100 + 1.96*se/100),
+                width = 0, alpha = 1, position = position_dodge(0.2)) +
+  geom_hline(yintercept = 0) +
+  facet_wrap(~country) +
+  labs(x = '', y = 'Estimated difference in PISA score') +
+  theme(axis.text.x=element_text(angle=-15),
+        legend.justification=c(1,0), 
+        legend.position=c(1,.6))
+
+
+
+```
+
+\note{
+
+}
+
+# Conclusion
+**Why the slight advantage compared to Mexican students?**  
+
+- Bicultural resources or prestige bestowed by experience in the U.S.
+- Facility with standardized tests
+- Parental resource advantage: benefits of migration
+- Bureaucratic hurdles might prevent the most disadvantaged students from enrolling in school [@mateos_2019_mestizo] or they have dropped out completely [@zuniga_2020_migracion]
+
+
+\note{\begin{itemize}
+\item There are a few possible explanations for these findings. First, why does the 0.5 generation have a slight advantage compared to Mexican students? This may be due to bicultural resources or prestige bestowed by experience in the U.S., 
+\item or facility with standardized tests. 
+\item However, even children who migrate at a very young age retain a slight advantage, so results are more likely due to a parental resource advantage stemming from the benefits of time spent in the U.S. In supplementary analyses I show that the main sample is somewhat *positively* selected on parental education and occupation, which supports this conjecture. 
+\item On the other hand, bureaucratic hurdles might prevent the most disadvantaged students from enrolling in school or they have dropped out completely. Further research is needed to assess these possibilities.
+\end{itemize}}
+
+## Conclusion
+**Why the disadvantage compared to U.S. students?**
+
+- In 2014, Mexico spent 2,000 USD per pupil, while the U.S. spent 18,000 USD [@santibanez_2021_contrasting, p. 25]
+- Short school day (4.5 hours in elementary and 7 hours in secondary school)
+- Few extracurricular or enrichment programs exist
+- Outside of school, social programs may be less well resourced
+
+\note{
+\begin{itemize}
+\item On the other hand, why are these students disadvantaged compared to those in the U.S.? The stark disparities likely stem from institutional factors. These are most clear in school resource disparities. For example, in 2014, Mexico spent 2,000 USD per pupil, while the U.S. spent 18,000.
+\item The school day in Mexico also tends to be short, 
+\item and few extracurricular or enrichment programs exist. 
+\item In addition, outside of school, social programs may be less well resourced than in the U.S.
+\end{itemize}}
+
+# References 
+<!-- {.allowframebreaks} -->
+
+\note{
+
+}
+\note{
+
+}
+\note{
+
+}

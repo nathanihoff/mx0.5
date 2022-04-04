@@ -1,0 +1,11 @@
+\beamer@sectionintoc {1}{Introduction}{2}{0}{1}
+\beamer@sectionintoc {2}{Empirical Expectations}{13}{0}{2}
+\beamer@sectionintoc {3}{Data and Methods}{26}{0}{3}
+\beamer@sectionintoc {4}{Results}{44}{0}{4}
+\beamer@sectionintoc {5}{Conclusion}{50}{0}{5}
+\beamer@sectionintoc {6}{Variables}{61}{1}{6}
+\beamer@sectionintoc {7}{Mexico Comparisons}{63}{1}{7}
+\beamer@sectionintoc {8}{U.S. Comparisons}{65}{1}{8}
+\beamer@sectionintoc {9}{Sensitivy Analysis}{67}{1}{9}
+\beamer@sectionintoc {10}{Conclusion}{68}{1}{10}
+\beamer@sectionintoc {11}{References}{76}{1}{11}

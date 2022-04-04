@@ -1,0 +1,403 @@
+---
+output:
+  # bookdown::word_document2:
+  #   reference_docx: "word-template.docx"
+  bookdown::pdf_document2:
+    toc: no
+    number_sections: no
+    pandoc_args: !expr rmdfiltr::add_wordcount_filter(rmdfiltr::add_citeproc_filter(args = NULL))
+    latex_engine: xelatex
+always_allow_html: true
+header-includes:
+# - \usepackage{setspace}\doublespace
+  # - \usepackage{endnotes}
+  # - \let\footnote=\endnote
+  # - \usepackage{endfloat}
+# - \setlength{\headheight}{14.5pt}
+# - \setlength{\headheight}{13.6pt}
+# - \usepackage{fancyhdr}
+# - \pagestyle{fancy}
+# - \rhead{N.I. Hoffmann}
+# - \lhead{`r format(Sys.time(), '%B %e, %Y')`}
+editor_options: 
+  chunk_output_type: console
+
+citeproc: no
+# fontfamily: times
+mainfont: Times New Roman
+fontsize: 12pt
+geometry: margin=1in
+indent: yes
+link-citations: no
+linkcolor: blue
+lang: 'en-US'
+
+
+bibliography: "My Library.bib"  
+csl: apa.csl
+# csl: american-sociological-association.csl
+
+# title: "Strangers in the Homeland? The Academic Performance of Children of Return Migrants"
+# subtitle: "RSF Dissertation Research Grant Proposal"
+# author: |
+#   | Nathan I. Hoffmann
+#   | Department of Sociology, UCLA
+
+# abstract: "The number of return migrants from the U.S. to Mexico has swelled in recent years, and yet we know little about the academic performance of the over 500,000 U.S.-born children who have accompanied them. Previous small-scale, qualitative studies have shown mixed results, with some emphasizing the struggles these students face in school, while others characterize these U.S. citizens as “star students.” My dissertation employs PISA test score data  to help settle this debate. I use this large-scale, international, academic assessment to compare U.S.-born children of return migrants in Mexico to two groups: Mexican-born students in Mexico, and students in the U.S. born to Spanish-speaking immigrant parents. My dissertation attempts to answer the following questions: How do these children find their way in a country at once foreign and familiar? What does it mean to assimilate into a society where ethnic, cultural, and legal barriers are at a minimum? If disparities exist, is this due to the challenges of migration or a process of selection of which families choose or are forced to migrate back to Mexico? Finally, how does the experience of the 0.5 generation in Mexico compare to the 0.5 generation in other countries with significant return migration?  My dissertation contributes to assimilation theory, pushes immigration scholars to consider an oft neglected group of young, U.S.-citizen migrants, and provides evidence for policymakers concerned with immigrant education."
+
+
+  
+# date: "`r format(Sys.time(), '%B %e, %Y')`"
+  
+---
+
+
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = F, warning = F, message = F, cache = T)
+options("yaml.eval.expr" = TRUE)
+
+# library(flextable)
+library(patchwork)
+library(srvyr)
+library(patchwork)
+library(cem)
+library(sandwich)
+library(lmtest)
+library(estimatr)
+library(here)
+library(knitr)
+library(kableExtra)
+library(broom)
+library(sensemakr)
+library(MatchIt)
+library(haven)
+library(tidyverse)
+
+knit_hooks$set(inline = function(x) {
+  prettyNum(x, big.mark=",")
+})
+
+
+options("yaml.eval.expr" = TRUE, scipen = 3, digits = 2)
+
+uclablue = '#2774AE'
+gray = '#808080'
+black = '#000000'
+ucla_palette = c(black, uclablue, gray)
+
+# theme_set(theme_cowplot(font_family = 'Palatino') + 
+theme_set(theme_classic(base_family = 'Palatino') + 
+      theme(legend.title=element_blank(), 
+         panel.grid.major.y = element_line('grey80'),
+         legend.background = element_rect(fill = alpha("white", 0.5))
+         ))
+ggplot <- function(...) ggplot2::ggplot(...) + 
+  scale_color_brewer(palette="Dark2") +
+  scale_fill_brewer(palette="Dark2")
+
+kable <- function(...) knitr::kable(..., format.args = list(big.mark = ","))
+```
+
+```{r load, include = F}
+pisa_full <- readRDS(here('data', 'pisa.rds')) %>%
+   filter(across(c(female,  mom_ed, dad_ed, early_ed, cultural_pos, home_ed, age),
+                ~ !is.na(.x))) %>%
+  mutate(school_id = paste0(year, school_id),
+         village = school_location == 'Village',
+         non_urban = ifelse(!is.na(school_location), school_location %in% c('Village', 'Small Town', 'Town'), NA))
+
+pisa_mex <- pisa_full %>%
+  filter(country == 'Mexico',
+         birth_country %in% c('Mexico', 'United States of America'),
+         mom_country == 'Mexico',
+         dad_country == 'Mexico') %>%
+  mutate(birth_country = ifelse(birth_country == 'United States of America', 'USA', as.character(birth_country)),
+         treat = as.numeric(birth_country == 'USA'))
+
+pisa_us <-  pisa_full %>%
+  filter((country %in% c('United States', 'United States of America') & 
+            birth_country == 'United States of America' &
+            lang == 'Spanish' &
+            mom_country == 'Another country (USA)' & 
+            dad_country == 'Another country (USA)')) %>%
+  mutate(country = 'USA',
+         birth_country = 'USA')
+
+pisa_mex_us <- bind_rows(
+    filter(pisa_mex, birth_country == 'USA'),
+    pisa_us
+) %>%
+  mutate(treat = as.numeric(country == 'Mexico'))
+
+
+pisa_full %>%
+  filter(country == 'Mexico',
+         birth_country == 'United States of America',
+         mom_country == 'Mexico', dad_country == 'Mexico') %>%
+  mutate(birth_country = ifelse(birth_country == 'United States of America', 'USA', as.character(birth_country)),
+         treat = as.numeric(birth_country == 'USA')) %>%
+  nrow()
+```
+
+```{r functions}
+rubin <- function(dataset, sample_label, covariates = NULL, pv_num = 5, 
+                  treat = 'treat', weights = 'weight', cluster_var = 'school_id'){
+  dataset = as.data.frame(dataset)
+  dim_list <- list()
+  method = ifelse(is.null(covariates), 'DIM', 'OLS')
+  
+  for(outcome in c('read', 'math', 'scie')){
+    est_ols <- rep(NA, pv_num)
+    var_ols <- rep(NA, pv_num)
+    for(pv in 1:pv_num){
+      if(is.null(covariates)){
+        formula <- paste0(outcome, pv, ' ~ ', treat)
+        } else{
+          formula <- paste0(outcome, pv, ' ~ ', treat, ' + ', covariates)
+        }
+      lm_model <- lm(formula, data = dataset, weights = weight)
+      est_ols[pv] <- tidy(lm_model)[[2,2]]
+      var_ols[pv] <- vcovCL(lm_model, cluster = dataset[, cluster_var])[2,2]
+      #var_ols[pv] <- vcovHC(lm_model, type="HC1")[2,2]
+    }
+    est_out_ols <- mean(est_ols)
+    var_samp_ols <- mean(var_ols)
+    var_imp_ols <- sum((est_ols - est_out_ols)^2)/4
+    se_out_ols <- sqrt(var_samp_ols + (1 + 1/5)*var_imp_ols)
+    
+    dim_list[[outcome]] <-
+      data.frame(method = method,
+                 sample = sample_label,
+                 Outcome = outcome, 
+                 Estimate = est_out_ols,
+                 se = se_out_ols)
+  }
+  dim_list %>%
+    bind_rows() %>%
+    mutate(Outcome = recode_factor(Outcome,
+                                 'read' = 'Reading',
+                                 'math' = 'Math',
+                                 'scie' = 'Science')) %>%
+    return()
+}
+
+moderator_p <- function(df, cat1, cat2){
+  out_list <- list()
+  for(outcome in unique(df$Outcome)){
+    b1 <- with(df, Estimate[sample == cat1 & Outcome == outcome])
+    se1 <- with(df, se[sample == cat1 & Outcome == outcome])
+    b2 <- with(df, Estimate[sample == cat2 & Outcome == outcome])
+    se2 <- with(df, se[sample == cat2 & Outcome == outcome]) 
+    
+    z <- (b1 - b2)/sqrt(se1^2 + se2^2)
+    p <- round(2*(1 - pnorm(abs(as.numeric(z)))), 3)
+    
+    out_list[[outcome]] <- data.frame(Outcome = outcome, dif = b1-b2, z = z, p = p)
+  }
+  return(bind_rows(out_list))
+}
+  
+  
+
+rubin_means <- function(dataset, labels = c(0,1), pv_num = 5, 
+                  treat = 'treat', weights = 'weight', cluster_id = 'school_id'){
+  dataset <- as_survey_design(dataset, 
+                              ids = cluster_id,
+                              weights = weights)
+  mean_list <- list()
+  
+  for(outcome in c('read', 'math', 'scie')){
+    mean_treat0 <- rep(NA, pv_num)
+    mean_treat1 <- rep(NA, pv_num)
+    var_treat0 <- rep(NA, pv_num)
+    var_treat1 <- rep(NA, pv_num)
+    
+    for(pv in 1:pv_num){
+      
+      summary_df <- dataset %>%
+        group_by(treat) %>%
+        summarize(mean = survey_mean(!!sym(paste0(outcome, pv))),
+                  var = survey_var(!!sym(paste0(outcome, pv))))
+      
+      mean_treat0[pv] <- summary_df[[1,2]]
+      mean_treat1[pv] <- summary_df[[2,2]]
+      
+      var_treat0[pv] <- summary_df[[1,4]]
+      var_treat1[pv] <- summary_df[[2,4]]
+      
+    }
+    mean_out0 <- mean(mean_treat0)
+    var_samp0 <- mean(var_treat0)
+    # var_imp0 <- sum((mean_treat0 - mean_out0)^2)/4
+    # sd_out0 <- sqrt(var_samp0 + (1 + 1/5)*var_imp0)
+    sd_out0 <- sqrt(var_samp0)
+    
+    mean_out1 <- mean(mean_treat1)
+    var_samp1 <- mean(var_treat1)
+    # var_imp1 <- sum((mean_treat1 - mean_out1)^2)/4
+    # sd_out1 <- sqrt(var_samp1 + (1 + 1/5)*var_imp1)
+    sd_out1 <- sqrt(var_samp1)
+    
+    mean_list[[outcome]] <-
+      data.frame(Outcome = outcome, 
+                 label = c(labels[1], labels[2]),
+                 n = c(nrow(filter(dataset, treat==0)), nrow(filter(dataset, treat==1))),
+                 Mean = c(mean_out0, mean_out1),
+                 SD = c(sd_out0, sd_out1)
+                 )
+  }
+  mean_list %>%
+    bind_rows() %>%
+    mutate(Outcome = recode_factor(Outcome,
+                                 'read' = 'Reading',
+                                 'math' = 'Math',
+                                 'scie' = 'Science')) %>%
+    return()
+}
+
+
+stacked_bar <- function(data, x, fill){
+  data %>%
+    filter(!is.na(!!sym(x)) & !is.na(!!sym(fill))) %>%
+    count(!!sym(x), !!sym(fill)) %>%
+    ggplot(aes(x = !!sym(x), y = n, fill = !!sym(fill))) +
+    geom_bar(position='fill', stat = 'identity') +
+    theme(axis.text.x = element_text(angle = -30)) +
+    labs(title = fill)
+}
+
+```
+
+
+
+<!-- Despite decades of research into migration flows between Mexico and the U.S., the migration process of children -- including return and circular migration -- is only recently receiving concerted scholarly attention. A flurry of theoretical work on return and circular migrant children in Mexico has followed the calls of @orellana_2001_transnational and @dobson_2009_unpacking to center children in migration research.  -->
+
+
+
+
+Despite an abundance of research on return migration, few studies focus on children of these returnees. These youths constitute a sizable population in the world today. @azose_2019_estimation estimate that about one in four migration events are a return to a person's country of birth, amounting to millions of return migrants worldwide. For most countries, counts of foreign-born children who accompany these returnees are unavailable. But one exception is Mexico; 500,000 American-born minors are living in Mexico, amounting to about 2 percent of school enrollment [@masferrer_2021_return, p. 39]. Following Víctor Zúñiga and colleagues [-@zuniga_2018_generation; @zuniga_2018_ninas; @zuniga_2021_children], I refer to these children as the "0.5 generation": children of immigrants who are born in their parents' country of destination and later return to their parents' country of origin.    
+
+How do these children find their way in a country at once foreign and familiar? What does it mean to assimilate into a society where ethnic, cultural, and legal barriers are at a minimum? Assimilation theory might predict a smooth transition, and yet the small-scale studies that exist emphasize the struggles that these children face in adapting to school in Mexico. Rich ethnographic work describes their difficulty with written language, invisibility to teachers, and stigma and exclusion from other youths. [@zuniga_2018_generation; @zuniga_2018_ninas; @zuniga_2021_children; @hamann_2006_pensando; @hernandez-leon_2020_imperfect; @despagne_2019_adaptation; @bybee_2020_estamos; @meyers_2014_outsiders; @bybee_2020_estamos]. But not all research depicts these adolescents as strangers in their homeland. @despagne_2019_adaptation find that, over time, return migrant children are able to reposition themselves, capitalizing on their binational and bicultural assets to succeed in school. Other scholars recount that, despite these youths' challenges in adjusting to daily life in Mexico, teachers characterize them as "star students" in their academic achievement [@bybee_2020_estamos].  
+
+How can we reconcile these diverging findings? Do the expectations of assimilation theory bear out on a national level? Because Mexico lacks national standardized testing [@santibanez_2021_contrasting], we do not know which findings generalize to the broader population of the U.S.-born 0.5 generation. Large-scale, nationally representative data are needed to determine whether the typical experience of these students is of academic advantage or disadvantage. Furthermore, if disparities exist, we do not know whether this is due to the challenges of migration or a process of selection of which families choose or are forced to migrate back to Mexico. Finally, how does the experience of the 0.5 generation in Mexico compare to the 0.5 generation in other countries with significant return migration?  
+
+My dissertation attempts to answer these questions by relying on the Program for International Student Assessment (PISA), which assesses 15-year-olds’ reading, math, and science skills every three years in dozens of countries worldwide [@schleicher_2019]. The aim of my dissertation is to characterize the educational achievement of children of return migrants, with its central chapter focusing on U.S.-born children of return migrants in Mexico. I will make two sets of comparisons. First, to assess the degree of integration or assimilation into their ancestral society, I will compare U.S.-born children of return migrants to local non-migrants. Second, I will assess how these children's academic trajectories might have progressed had their parents not return-migrated, comparing these children to a similar, counterfactual group in the U.S. I will also investigate the selection of return migrant parents and assess how it may impact their children's achievement.  
+
+My dissertation makes an important corrective to the study of immigration. It contributes to assimilation theory, pushes immigration scholars to consider an oft neglected group of young, U.S.-citizen migrants, and provides evidence for policymakers concerned with immigrant education.
+
+
+## Research Context
+Return migration from the U.S. to Mexico has grown in recent years, due to both rising deportations and changing economic circumstances [@durand_2019_evolution]. From 2005 to 2010, 1.39 million Mexican immigrants returned to Mexico from the U.S., and 710,000 returned between 2013 and 2018 [@gonzalez-barrera_2021_covid19]. In 2000, the Mexican census counted 258,000 U.S.-born minors; by 2010, this had more than doubled to 570,000 [@masferrer_2019_immigrants]. This number has remained steady in the years since: the 2020 Mexican census reports that 500,600 minors, or about 2 percent of the school-age population, were born in the U.S. [@masferrer_2021_return, p. 39].  
+
+Although quantitative work remains scarce, qualitative researchers have begun to study these youths. The findings from researchers working in this domain have been mixed. Most of this work emphasizes the difficulties that the 0.5 generation faces in the Mexican "homeland." Despite usually possessing oral proficiency in both Spanish and English, their written competency tends to lag behind [@gonzalez_2016_moving; @despagne_2019_adaptation; @gandara_2020_students; @santibanez_2021_contrasting]. Especially when they first arrive, their peers often treat them as outsiders [@meyers_2014_outsiders], and the stigma they face can be exacerbated by the political climate, such as the 2016 election [@bybee_2020_estamos]. Conflicts also occur psychologically, as these children struggle with their identity and feelings of belonging [@despagne_2019_adaptation; @bybee_2020_estamos]. Yet their appearance and oral fluency often renders them invisible to teachers [@sanchezgarcia_2016_educator], and resources for immigrant students are lacking in Mexico [@santibanez_2021_contrasting]. Even navigating the complicated bureaucracy to enroll in school or finding the money for transportation, uniforms, and school supplies may be out of reach for return migrant families [@gandara_2020_students; @mateos_2019_mestizo]. Furthermore, family separation is a frequent, stressful feature of migration that is common for the 0.5 generation as well [@gonzalez_2016_moving; @zuniga_2018_generation]. These factors are compounded by the harsh immigration regime in the U.S. that encourages and forces the departure of these families [@waldinger_2021_transnational].  
+
+Yet not all work on return migrant children conceives of them as consigned to disadvantage. @zuniga_2018_ninas and @hernandez-leon_2020_imperfect see some of the children in their studies benefiting from dual nationality. Similarly, in an intensive ethnography in two schools in central Mexico, Bybee et al. [-@bybee_2020_estamos, p. 135] observe a "star student" discourse: "The notion of American-Mexican pupils as 'good students' was common enough in both schools that it extended beyond English classes where they had an obvious advantage." Although these students experienced bullying and exclusion due to their perceived foreignness, the privilege of binational education and other resources gave some of them a leg up in school.  
+
+
+
+
+## Empirical Expectations
+
+How can we understand the mixed results from previous studies of the 0.5 generation in Mexico? Work on the 0.5 generation has not fully engaged with theories of return migrant integration more broadly, yet these theories can help explain both positive and negative outcomes of their U.S.-born children. First, they help us understand possible *disadvantage* for the 0.5 generation. The perspective of neoclassical economics suggests that return migrant families may not found lucrative employment in the host country [@todaro_1980]. Even in cases where they have, a transnationalist perspective [@portes_1999a; @basch_1994_nations] emphasizes that alienation and exclusion in the "home" society can still afflict return migrants and their children as they struggle with their identities. Institutions for investment and activation of resources gained in the U.S. may also be lacking [@hagan_2020_return, p. 539]. In addition, migrants who are not ready and willing to migrate [@cassarino_2004_theorising] -- as in the case of deportation, which accounts for 55 percent of all return migrations to Mexico [@warren_2020_reverse] -- are less likely to possess the resources to ease re-entry into Mexican society. The result can be traumatic for children, and may give rise to the difficulties documented in the ethnographic research cited above. These expectations lead to what I call the *rough re-entry hypothesis: Compared to Mexican-born children in Mexico, children of return migrant children attain lower PISA scores.*  
+
+Yet the 0.5 generation may also be among the privileged in Mexico. The New Economics of Labor Migration [@stark_1985] highlights how voluntary return migration can be evidence of economic success, with parents accumulating sufficient resources to lead a comfortable life in Mexico. Following Cassarino's [-@cassarino_2004_theorising] resource mobilization-preparedness framework, if children benefit from resource-rich social networks and parents who have achieved their goals in acquiring skills and capital while abroad, and if the family is ready and willing to move, they are more likely to be well supported upon return to the parents' country of origin. Scholars suggest that at least some of these children benefit from resources such as dual nationality, bicultural facility, and experience in better resourced schools [@gandara_2021_students]. Furthermore, in the absence of most social markers of difference, assimilation theory predicts that integration should be straightforward and rapid [@alba_2003; @portes_1993a]. Referencing the "star student discourse" documented by @bybee_2020_estamos, the *star student hypothesis* predicts the following: *Compared to Mexican-born children in Mexico, children of return migrant children attain higher PISA scores.*  
+
+If the rough re-entry hypothesis is correct, then these students' challenges may be connected to return-migrant selection. For return migrants from the U.S. to Mexico, negative selection on characteristics such as education and income has predominated in recent years [@campos-vazquez_2012_selfselection; @parrado_2016_changing]. Observing which migrant families both voluntarily and involuntarily return to Mexico, Hernández-León et al. [-@hernandez-leon_2020_imperfect, p. 94] suggest that "U.S. policies [...] effectively externalize downward assimilation to communities of origin." Migrants who return to Mexico from the U.S. may be those having the roughest time in the host country; hence their children are a selected group, more likely to struggle in the homeland due to disadvantage accrued before return. Furthermore, less-educated migrant parents are less likely to find lucrative work and more likely to be targeted for deportation, so controlling for family background may narrow disparities. I call this third set of expectations the *selection hypothesis: Compared to children of Spanish-speaking immigrants in the U.S., children of return migrant children in Mexico attain lower PISA scores. However, in models adjusting for family background and resources, this disparity diminishes.*  
+
+
+
+
+## Data and Methods
+
+This study makes two types of comparisons. First, it places U.S.-born children of Mexican return migrants in the Mexican educational context by comparing them to local Mexican children without migration backgrounds, providing an estimate of the descriptive gap in achievement between locals and the 0.5 generation. This set of analyses follows in the tradition of assimilation literature, showing how similar to locals these migrant children have become. Second, it compares these children to a suitable group in the U.S.: Spanish-speaking children of immigrants in the U.S. The target here is a causal estimand: the scores these children would have obtained in the U.S. had they not migrated to Mexico. Finally, my dissertation will explicitly examine immigrant selection by comparing and incorporating attributes of parents of these children in Mexico and the U.S. By considering both the U.S. and Mexico, this study employs a cross-border perspective [@waldinger_2017] that sheds far more light on the process and outcomes of migration than a single-country analysis would.  
+
+Data for the preliminary results below come from the pooled 2012, 2015, and 2018 waves of PISA. As shown in Table \@ref(tab:stats), my sample of interest comprises `r count(filter(pisa_mex, birth_country == 'USA'))` children in Mexico who were born in the U.S. to two Mexican-born parents. I compare these to `r count(filter(pisa_mex, birth_country == 'Mexico'))` children born in Mexico to two Mexican-born parents as well as `r nrow(pisa_us)` children born to two Spanish-speaking immigrant parents in the U.S. Although PISA data for the U.S. do not include exact country of birth for parents, about two-thirds of the Hispanic population in the U.S. is of Mexican origin [@trevelyan_2016_characteristics, p. 12], rendering this an appropriate pseudo-control group.^[Previous studies show similar achievement among U.S.-born children of Spanish-speaking immigrants from a variety of origins. Using data from the Immigration and Intergenerational Mobility in Metropolitan Los Angeles (IIMMLA) survey and Children of Immigrants Longitudinal Study (CILS-III) for San Diego, Rumbaut [-@rumbaut_2008_coming, p. 222] finds that the high school grades of second-generation Mexican, Salvadoran, and Guatemalan students are very similar. Similarly, models by @glick_2007_academic show that in the Early Childhood Longitudinal Study, third-grade math scores for children of Mexican, Puerto Rican, and other Hispanic origin are indistinguishable.]  
+
+Outcome variables consist of reading, math, and science scores, which the OECD constructs to have a global mean of 500 and standard deviation of 100. Pre-migration control variables include mother's and father's education (measured in 6-category ISCED, entered as a continuous variable in regressions), cultural possessions, home educational resources, age, a categorical variable for early childhood education and care (ECEC), survey year, and two-category gender. I will also consider post-migration variables as possible mediators.  
+
+I will employ difference-in-means and OLS regression estimates comparing children of Mexican return migrants to both the Mexican and U.S. comparison samples. I will then incorporate pre-migration and post-migration attributes in turn as covariates in the OLS regressions to examine selection and integration processes. I will also test the influence of the potential moderators of gender, rural/urban location, and age at migration by performing OLS regressions on subsets of the data. 
+
+
+
+
+```{r stats}
+bind_rows(
+  rubin_means(pisa_mex, labels = c('Mexico', 'U.S.')) %>%
+    mutate(Country = 'Mexico') %>%
+    select(Outcome, `Country of Residence` = Country, `Birth Country` = label, n, Mean, SD),
+  rubin_means(pisa_mex_us, labels = c('U.S.', 'Mexico')) %>%
+    filter(label == 'U.S.') %>%
+    mutate(`Birth Country` = 'U.S.') %>%
+    select(Outcome, `Country of Residence` = label, `Birth Country`, n, Mean, SD)
+  )  %>% 
+  select(-SD) %>% 
+  pivot_wider(names_from = Outcome, values_from = Mean) %>%
+  # flextable::flextable() %>%
+  # flextable::set_caption('Sample sizes and PISA score means') %>%
+  # flextable::add_footer_lines('Source: PISA data for 2012, 2015, and 2018. Author\'s calculations. The Mexico country, U.S. birth country sample includes only children of Mexican immigrants. The U.S. country, U.S. birth country sample includes only children born to Spanish-speaking immigrant parents. Mean estimates incorporate sampling weights and account for clustering within schools.') %>%
+  # flextable::autofit() %>%
+  # flextable::fit_to_width(7.5)
+  kable(booktabs = T, linesep = "",
+        caption = 'Sample sizes and PISA score means. The Mexico country, U.S. birth country sample includes only children of Mexican immigrants. The U.S. country, U.S. birth country sample includes only children born to Spanish-speaking immigrant parents. Mean estimates incorporate sampling weights and account for clustering within schools.') %>%
+  footnote(general = 'PISA data for 2012, 2015, and 2018. Author\'s calculations.',
+           general_title = 'Source:',
+           threeparttable = T,
+           footnote_as_chunk = T)
+  
+  # df %>%
+#   arrange(Outcome) %>%
+#   pivot_wider(names_from = 'Outcome', values_from = c('Mean', 'SD')) %>%
+#   flextable() %>%
+#   add_header_row(colwidths = c(3,2,2,2), values = c('', 'Reading', 'Math', 'Science'))
+  
+  
+  # bind_rows(
+  # pisa_mex %>%
+  #   group_by(country, birth_country) %>%
+  #   summarize(n = n(),
+  #             Reading = mean(read1),
+  #             `Reading SD` = sd(read1),
+  #             Math = mean(math1),
+  #             `Math SD` = sd(math1),
+  #             Science = mean(scie1),
+  #             `Science SD` = sd(scie1)),
+  # pisa_us %>%
+  #   group_by(country, birth_country) %>%
+  #   summarize(n = n(),
+  #             Reading = mean(read1),
+  #             `Reading SD` = sd(read1),
+  #             Math = mean(math1),
+  #             `Math SD` = sd(math1),
+  #             Science = mean(scie1),
+  #             `Science SD` = sd(scie1))) %>%
+  # rename(`Birth Country` = birth_country,
+  #        Country = country) %>%
+```
+
+
+## Preliminary Results
+
+The first set of analyses compares the 0.5 generation to local children in Mexico. Table \@ref(tab:stats) presents sample sizes, mean scores, and standard deviations for the three samples. Although mean scores for all groups in the table are below the global average of 500, U.S.-born children in Mexico tend to score somewhat higher than Mexican-born children, especially in math.  
+
+The second set of analyses compares the 0.5 generation in Mexico and children of Spanish-speaking immigrants in the U.S. This pseudo-control group allows us to address the counterfactual question: what would have happened to these children had they not migrated to Mexico? Descriptive statistics in Table \@ref(tab:stats) shows that although the 0.5 generation achieves somewhat higher scores than their Mexican-born peers, the U.S. comparison group performs much higher.  
+
+## Next Steps
+First, I will investigate whether these results hold up when both pre- and post-migration controls are included in regression analyses. The former adjusts for immigrant selection, while the latter investigates possible mediating factors. Second, I will test the influence of possible moderators: gender, urbanicity, and age at migration. Third, I will test the robustness of my results using other estimation methods besides OLS. Finally, in other chapters of my dissertation, I will compare results for U.S.-born adolescents in Mexico to other children of return migrants around the world. 
+
+
+
+## Impact
+
+This project makes both empirical and theoretical interventions in the study of international migration and is also relevant to policymakers concerned about immigrant outcomes.  
+
+My dissertation makes three larger contributions to migration studies. First, it contributes to assimilation theory by showing how assimilation processes function in a context where ethnic, cultural, and legal barriers are at a minimum. I build on the legacy of segmented assimilation theory [@portes_1993a] and other work highlighting the possible downsides of rapid assimilation [e.g. @valenzuela_1999_subtractive]. Total assimilation may not be a desirable outcome in many contexts, if it means a decline in favorable outcomes, such as education. Second, it explores the importance that institutional factors can assume in the assimilation process. If results vary little across individual attributes, then larger institutional forces common to the full sample -- such as the Mexican school system -- play the main role in facilitating rapid educational assimilation. Finally, my dissertation pushes for consideration of an increasingly significant group in Mexico and other countries of emigration: foreign-born children of return migrants.  
+
+My dissertation will also provide important evidence for policymakers looking to maximize immigrant well-being. The threat of deportation has been shown to negatively impact student achievement [@gandara_2021_schools], and deportation itself is likely to have even more negative effects. If the preliminary results are confirmed by more extensive analysis, then educational outcomes are another casualty in the U.S.'s punitive immigration regime. My dissertation will also inform educators in both the U.S. and Mexico about this important group.
+
+
+
+\newpage
+
+# References

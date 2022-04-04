@@ -1,0 +1,939 @@
+---
+output:
+  # bookdown::word_document2:
+    # reference_docx: "word-template.docx"
+  bookdown::pdf_document2:
+    toc: no
+    number_sections: no
+    pandoc_args: !expr rmdfiltr::add_wordcount_filter(rmdfiltr::add_citeproc_filter(args = NULL))
+    latex_engine: xelatex
+always_allow_html: true
+header-includes:
+# - \usepackage{setspace}\doublespace
+  # - \usepackage{endnotes}
+  # - \let\footnote=\endnote
+  # - \usepackage{endfloat}
+# - \setlength{\headheight}{14.5pt}
+- \setlength{\headheight}{13.6pt}
+- \usepackage{fancyhdr}
+- \pagestyle{fancy}
+- \rhead{N.I. Hoffmann}
+- \lhead{`r format(Sys.time(), '%B %e, %Y')`}
+editor_options: 
+  chunk_output_type: console
+
+citeproc: no
+fontfamily: mathpazo
+fontsize: 11pt
+geometry: margin=1in
+indent: yes
+link-citations: yes
+linkcolor: blue
+lang: 'en-US'
+
+
+bibliography: "/Users/nathan/Documents/My Library.bib" 
+csl: apa.csl
+# csl: american-sociological-association.csl
+
+title: "Strangers in the Homeland? The Academic Performance of Children of Return Migrants in Mexico"
+subtitle: "STAT202B Final Project"
+
+author: "Nathan I. Hoffmann"
+
+  
+date: "`r format(Sys.time(), '%B %e, %Y')`"
+  
+---
+
+
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = F, warning = F, message = F, cache = T)
+options("yaml.eval.expr" = TRUE)
+
+# library(flextable)
+library(patchwork)
+library(srvyr)
+library(patchwork)
+library(cem)
+library(sandwich)
+library(lmtest)
+library(estimatr)
+library(here)
+library(knitr)
+library(kableExtra)
+library(broom)
+library(sensemakr)
+library(MatchIt)
+library(haven)
+library(tidyverse)
+
+knit_hooks$set(inline = function(x) {
+  prettyNum(x, big.mark=",")
+})
+
+
+options("yaml.eval.expr" = TRUE, scipen = 3, digits = 2)
+
+uclablue = '#2774AE'
+gray = '#808080'
+black = '#000000'
+ucla_palette = c(black, uclablue, gray)
+
+# theme_set(theme_cowplot(font_family = 'Palatino') + 
+theme_set(theme_classic(base_family = 'Palatino') + 
+      theme(legend.title=element_blank(), 
+         panel.grid.major.y = element_line('grey80'),
+         legend.background = element_rect(fill = alpha("white", 0.5))
+         ))
+ggplot <- function(...) ggplot2::ggplot(...) + 
+  scale_color_brewer(palette="Dark2") +
+  scale_fill_brewer(palette="Dark2")
+
+kable <- function(...) knitr::kable(..., format.args = list(big.mark = ","))
+```
+
+```{r load, include = F}
+pisa_full <- readRDS(here('data', 'pisa.rds')) %>%
+   filter(across(c(female,  mom_ed, dad_ed, early_ed, cultural_pos, home_ed, age),
+                ~ !is.na(.x))) %>%
+  mutate(school_id = paste0(year, school_id),
+         village = school_location == 'Village',
+         non_urban = ifelse(!is.na(school_location), school_location %in% c('Village', 'Small Town', 'Town'), NA))
+
+pisa_mex <- pisa_full %>%
+  filter(country == 'Mexico',
+         birth_country %in% c('Mexico', 'United States of America'),
+         mom_country == 'Mexico',
+         dad_country == 'Mexico') %>%
+  mutate(birth_country = ifelse(birth_country == 'United States of America', 'USA', as.character(birth_country)),
+         treat = as.numeric(birth_country == 'USA'))
+
+pisa_us <-  pisa_full %>%
+  filter((country %in% c('United States', 'United States of America') & 
+            birth_country == 'United States of America' &
+            lang == 'Spanish' &
+            mom_country == 'Another country (USA)' & 
+            dad_country == 'Another country (USA)')) %>%
+  mutate(country = 'USA',
+         birth_country = 'USA')
+
+pisa_mex_us <- bind_rows(
+    filter(pisa_mex, birth_country == 'USA'),
+    pisa_us
+) %>%
+  mutate(treat = as.numeric(country == 'Mexico'))
+
+
+pisa_full %>%
+  filter(country == 'Mexico',
+         birth_country == 'United States of America',
+         mom_country == 'Mexico', dad_country == 'Mexico') %>%
+  mutate(birth_country = ifelse(birth_country == 'United States of America', 'USA', as.character(birth_country)),
+         treat = as.numeric(birth_country == 'USA')) %>%
+  nrow()
+```
+
+```{r functions}
+rubin <- function(dataset, sample_label, covariates = NULL, pv_num = 5, 
+                  treat = 'treat', weights = 'weight', cluster_var = 'school_id'){
+  dataset = as.data.frame(dataset)
+  dim_list <- list()
+  method = ifelse(is.null(covariates), 'DIM', 'OLS')
+  
+  for(outcome in c('read', 'math', 'scie')){
+    est_ols <- rep(NA, pv_num)
+    var_ols <- rep(NA, pv_num)
+    for(pv in 1:pv_num){
+      if(is.null(covariates)){
+        formula <- paste0(outcome, pv, ' ~ ', treat)
+        } else{
+          formula <- paste0(outcome, pv, ' ~ ', treat, ' + ', covariates)
+        }
+      lm_model <- lm(formula, data = dataset, weights = weight)
+      est_ols[pv] <- tidy(lm_model)[[2,2]]
+      var_ols[pv] <- vcovCL(lm_model, cluster = dataset[, cluster_var])[2,2]
+      #var_ols[pv] <- vcovHC(lm_model, type="HC1")[2,2]
+    }
+    est_out_ols <- mean(est_ols)
+    var_samp_ols <- mean(var_ols)
+    var_imp_ols <- sum((est_ols - est_out_ols)^2)/4
+    se_out_ols <- sqrt(var_samp_ols + (1 + 1/5)*var_imp_ols)
+    
+    dim_list[[outcome]] <-
+      data.frame(method = method,
+                 sample = sample_label,
+                 Outcome = outcome, 
+                 Estimate = est_out_ols,
+                 se = se_out_ols)
+  }
+  dim_list %>%
+    bind_rows() %>%
+    mutate(Outcome = recode_factor(Outcome,
+                                 'read' = 'Reading',
+                                 'math' = 'Math',
+                                 'scie' = 'Science')) %>%
+    return()
+}
+
+moderator_p <- function(df, cat1, cat2){
+  out_list <- list()
+  for(outcome in unique(df$Outcome)){
+    b1 <- with(df, Estimate[sample == cat1 & Outcome == outcome])
+    se1 <- with(df, se[sample == cat1 & Outcome == outcome])
+    b2 <- with(df, Estimate[sample == cat2 & Outcome == outcome])
+    se2 <- with(df, se[sample == cat2 & Outcome == outcome]) 
+    
+    z <- (b1 - b2)/sqrt(se1^2 + se2^2)
+    p <- round(2*(1 - pnorm(abs(as.numeric(z)))), 3)
+    
+    out_list[[outcome]] <- data.frame(Outcome = outcome, dif = b1-b2, z = z, p = p)
+  }
+  return(bind_rows(out_list))
+}
+  
+  
+
+rubin_means <- function(dataset, labels = c(0,1), pv_num = 5, 
+                  treat = 'treat', weights = 'weight', cluster_id = 'school_id'){
+  dataset <- as_survey_design(dataset, 
+                              ids = cluster_id,
+                              weights = weights)
+  mean_list <- list()
+  
+  for(outcome in c('read', 'math', 'scie')){
+    mean_treat0 <- rep(NA, pv_num)
+    mean_treat1 <- rep(NA, pv_num)
+    var_treat0 <- rep(NA, pv_num)
+    var_treat1 <- rep(NA, pv_num)
+    
+    for(pv in 1:pv_num){
+      
+      summary_df <- dataset %>%
+        group_by(treat) %>%
+        summarize(mean = survey_mean(!!sym(paste0(outcome, pv))),
+                  var = survey_var(!!sym(paste0(outcome, pv))))
+      
+      mean_treat0[pv] <- summary_df[[1,2]]
+      mean_treat1[pv] <- summary_df[[2,2]]
+      
+      var_treat0[pv] <- summary_df[[1,4]]
+      var_treat1[pv] <- summary_df[[2,4]]
+      
+    }
+    mean_out0 <- mean(mean_treat0)
+    var_samp0 <- mean(var_treat0)
+    # var_imp0 <- sum((mean_treat0 - mean_out0)^2)/4
+    # sd_out0 <- sqrt(var_samp0 + (1 + 1/5)*var_imp0)
+    sd_out0 <- sqrt(var_samp0)
+    
+    mean_out1 <- mean(mean_treat1)
+    var_samp1 <- mean(var_treat1)
+    # var_imp1 <- sum((mean_treat1 - mean_out1)^2)/4
+    # sd_out1 <- sqrt(var_samp1 + (1 + 1/5)*var_imp1)
+    sd_out1 <- sqrt(var_samp1)
+    
+    mean_list[[outcome]] <-
+      data.frame(Outcome = outcome, 
+                 label = c(labels[1], labels[2]),
+                 n = c(nrow(filter(dataset, treat==0)), nrow(filter(dataset, treat==1))),
+                 Mean = c(mean_out0, mean_out1),
+                 SD = c(sd_out0, sd_out1)
+                 )
+  }
+  mean_list %>%
+    bind_rows() %>%
+    mutate(Outcome = recode_factor(Outcome,
+                                 'read' = 'Reading',
+                                 'math' = 'Math',
+                                 'scie' = 'Science')) %>%
+    return()
+}
+
+
+stacked_bar <- function(data, x, fill){
+  data %>%
+    filter(!is.na(!!sym(x)) & !is.na(!!sym(fill))) %>%
+    count(!!sym(x), !!sym(fill)) %>%
+    ggplot(aes(x = !!sym(x), y = n, fill = !!sym(fill))) +
+    geom_bar(position='fill', stat = 'identity') +
+    theme(axis.text.x = element_text(angle = -30)) +
+    labs(title = fill)
+}
+
+```
+
+
+
+<!-- Despite decades of research into migration flows between Mexico and the U.S., the migration process of children -- including return and circular migration -- is only recently receiving concerted scholarly attention. A flurry of theoretical work on return and circular migrant children in Mexico has followed the calls of @orellana_2001_transnational and @dobson_2009_unpacking to center children in migration research.  -->
+
+
+<!-- **Notes for the Migration Working Group**: Thanks for reading my paper! I welcome any and all feedback and suggestions. I'm especially interested in how well my theoretical discussion works, whether the hypotheses are helpful, and whether the presentation of results is clear. I'm also wondering if I'm stretching the term "0.5 generation" too much from its original meaning, and if I should just call these students "U.S.-born children of return migrants." I'm hoping to send this to either a generalist sociology or demography journal, and I'm curious which you think is more appropriate.  -->
+
+# Introduction
+
+Despite an abundance of research on return migration, few studies focus on children of these returnees. @azose_2019_estimation estimate that the greatest number of return migrants in the world are from the United States to Mexico. Due to both rising deportations as well as economic recession [@durand_2019_evolution], 1.3 million Mexican migrants in the U.S. made the journey back to Mexico between 2010 and 2015 [@azose_2019_estimation]. Children of these Mexican return migrants now constitute a sizable population in Mexico, and yet they are only recently receiving scholarly attention. Estimates suggest that about 500,000 American-born minors live in Mexico, constituting about 2 percent of school enrollment [@masferrer_2021_return, p. 39]. Following Víctor Zúñiga and colleagues [-@zuniga_2018_generation; @zuniga_2018_ninas; @zuniga_2021_children], I refer to these children as the "0.5 generation": children of Mexican immigrants who are born in the U.S. and later migrate to Mexico.  
+
+What does it mean to assimilate into a society where ethnic, cultural, and legal barriers are at a minimum? Assimilation theory might predict a smooth transition, and yet the small-scale studies that exist emphasize the struggles that these children face in adapting to school in Mexico. Ethnographic work describes their difficulty with written language, invisibility to teachers, and stigma and exclusion from other youths. [@zuniga_2018_generation; @zuniga_2018_ninas; @zuniga_2021_children; @hamann_2006_pensando; @hernandez-leon_2020_imperfect; @despagne_2019_adaptation; @bybee_2020_estamos; @meyers_2014_outsiders; @bybee_2020_estamos]. But not all research depicts these adolescents as strangers in their homeland. @despagne_2019_adaptation find that, over time, return migrant children are able to reposition themselves, capitalizing on their binational and bicultural assets to succeed in school. Other scholars recount that, despite these youths' challenges in adjusting to daily life in Mexico, teachers characterize them as "star students" in their academic achievement [@bybee_2020_estamos].  
+
+How can we reconcile this divergence? Because Mexico lacks national standardized testing [@santibanez_2021_contrasting], we do not know which findings generalize to the broader population of the U.S.-born 0.5 generation. Large-scale, nationally representative data are needed to determine whether the typical experience of these students is of academic advantage or disadvantage. One possibility is that the mixed findings are due a heterogeneous composition of this population. Recent research in migration studies has uncovered heterogeneity in such populations as Mexican migrants to the U.S. [@garip_2016_move], Asian Americans [@drouhot_2021_what], and Muslims in France [@drouhot_2021_cracks]. The heterogeneity in findings for the 0.5 generation in Mexico may stem from heterogeneity in this migrant group.
+
+This paper addresses the following research questions:  
+
+1. What are the typical academic outcomes for U.S.-born children of return migrants in Mexico?    
+2. What kinds of heterogeneity are present in this sample?  
+3. When the sample is partitioned based on heterogeneity, do academic outcomes vary between clusters? What might explain this?  
+
+To help answer these, this paper relies on the Program for International Student Assessment (PISA) to characterize the educational achievement of U.S.-born children of return migrants in Mexico. PISA assesses 15-year-olds’ reading, math, and science skills every three years in dozens of countries worldwide [@schleicher_2019_pisa]. For each research question, I use different methods to help get at an answer. For the first, I use OLS regression to compare PISA scores between the 0.5 generation and two other groups: Mexican-born students in Mexico, and children of two Spanish-speaking immigrants in the U.S. For the second research question, I explore the latent structure of the 0.5 generation using Principal Components Analysis (PCA) and Exploratory Factor Analysis (EFA). Finally, I partition the sample based on the first component, first factor and two-cluster k-means clustering, and I calculate difference-in-means estimates again for the subgroups separately.
+
+
+# Research Context
+The Mexico-U.S. migration system has changed dramatically in the 21st century [@durand_2019_evolution]. After decades of high migration from Mexico to the U.S., the number of Mexican immigrants in the U.S. peaked at 12.8 million in 2007 and has declined since, numbering 11.4 million in 2019 [@gonzalez-barrera_2021_covid19]. This fall is due both to lower rates of entry and rising rates of return [@durand_2019_evolution]. Pew estimates that from 2005 to 2010, 1.39 million Mexican immigrants returned to Mexico from the U.S., and 710,000 returned between 2013 and 2018 [@gonzalez-barrera_2021_covid19].
+
+The bulk of return flows has been undocumented immigrants. From 2010 to 2018, 2.6 million undocumented Mexican immigrants returned to Mexico [@warren_2020_reverse]. A rapid increase in deportations is responsible for a large part of this outflow [@durand_2019_evolution, p. 37], but @warren_2020_reverse highlights that 45 percent of undocumented Mexican immigrants returned voluntarily. Precarious economic conditions in the U.S. and a stabilizing Mexican economy have increased incentives to return [@gonzalez-barrera_2021_covid19].  
+
+As economic conditions and U.S. immigration policy have changed, so has the composition of Mexican return migrants. @campos-vazquez_2012_selfselection find a shift from positive to negative selection when compared to the full Mexican population: in 1990, return migrants had more years of schooling and higher wages than their stay-at-home compatriots, whereas in 2010 they tended to have less schooling and earn lower wages. @parrado_2016_changing argue that the lower wages of return migrants in 2010 compared to 1990 and 2000 are due to the less voluntary nature of return migration in recent years, and they also find decreases in entrepreneurship and the ability to remain inactive. For deportees, accumulation of valuable skills and capital is cut short [@cassarino_2004_theorising]. Using data from 2011 to 2013, @diaz_2016_moving show that negative selection also characterizes comparisons to Mexican immigrants who stay in the U.S.; for example, return migrants are less likely to possess a high school or college degree.  
+
+Children are virtually absent from most discussions of return migration, yet their numbers are significant. In 2000, the Mexican census counted 258,000 U.S.-born minors; by 2010, this had more than doubled to 570,000 [@masferrer_2019_immigrants]. This number has remained steady in the years since: the 2020 Mexican census reports that 500,600 minors, or about 2 percent of the school-age population, were born in the U.S. [@masferrer_2021_return, p. 39].  
+
+Although quantitative work remains scarce, qualitative researchers have begun to study these youths. Early work conceptualizing "(transnational) sojourner students" [@hamann_2001_theorizing; @hamann_2006_pensando] led to a large-scale survey in Nuevo León, Zacatecas, Puebla, and Jalisco to identify hundreds of students who had been born or had spent significant time in the U.S. [@zuniga_2018_ninas]. This research team dubs this population the "0.5 generation." Like the "1.5 generation" label for children who migrate at a young age [@portes_2001_legacies], "0.5 generation" foregrounds liminality; they cannot be easily grouped with either the native-born "0 generation" or the "first generation" of migrants more broadly, and this in-betweenness contributes to their particular challenges navigating an education system and society that feels both familiar and foreign.^[While Zúniga and colleagues also include minors born in Mexico who migrated to the U.S. at an early age and later returned, I more narrowly apply the "0.5 generation" label only to those born in the U.S.]
+
+<!-- regardless of their place of birth, these children have experience abroad but currently reside in the country of their parents' birth. -->
+<!-- Noticing that Mexican adult respondents in Georgia often held plans to return to Mexico with their children -- many of them U.S.-born -- Hamann [-@hamann_2001_theorizing, p. 32] defined a new category, "sojourner student," whose "two defining characteristics are their vulnerability to dislocation and their transnational background."  -->
+
+The findings from the studies by Zúñiga, his colleagues, and other researchers working in this domain have been mixed. Most of this work emphasizes the difficulties that the 0.5 generation faces in the Mexican "homeland." Despite usually possessing oral proficiency in both Spanish and English, their written competency often lags behind [@gonzalez_2016_moving; @despagne_2019_adaptation; @gandara_2020_students; @santibanez_2021_contrasting]. Especially when they first arrive, their peers often treat them as outsiders [@meyers_2014_outsiders], and the stigma they face can be exacerbated by the political climate, such as the 2016 election [@bybee_2020_estamos]. Conflicts also occur psychologically, as these children struggle with their identity and feelings of belonging [@despagne_2019_adaptation; @bybee_2020_estamos]. Yet their appearance and oral fluency often renders them invisible to teachers [@sanchezgarcia_2016_educator], and resources for immigrant students are lacking in Mexico [@santibanez_2021_contrasting]. Even navigating the complicated bureaucracy to enroll in school or finding the money for transportation, uniforms, and school supplies may be out of reach for return migrant families [@gandara_2020_students; @mateos_2019_mestizo]. Furthermore, family separation is a frequent, stressful feature of migration that is common for the 0.5 generation as well [@gonzalez_2016_moving; @zuniga_2018_generation]. These factors are compounded by the harsh immigration regime in the U.S. that encourages and forces the departure of these families [@waldinger_2021_transnational].  
+
+Yet not all work on return migrant children conceives of them as consigned to disadvantage. @zuniga_2018_ninas and @hernandez-leon_2020_imperfect see some of the children in their studies benefiting from dual nationality. Similarly, in an intensive ethnography in two schools in central Mexico, Bybee et al. [-@bybee_2020_estamos, p. 135] observe a "star student" discourse: "The notion of American-Mexican pupils as 'good students' was common enough in both schools that it extended beyond English classes where they had an obvious advantage." Although these students experienced bullying and exclusion due to their perceived foreignness, the privilege of binational education and other resources gave some of them a leg up in school.  
+
+
+
+
+
+# Data
+
+Data for the results below come from the pooled 2012, 2015, and 2018 waves of PISA. As shown in Table \@ref(tab:stats), my sample of interest comprises `r count(filter(pisa_mex, birth_country == 'USA'))` children in Mexico who were born in the U.S. to two Mexican-born parents. I compare these to `r count(filter(pisa_mex, birth_country == 'Mexico'))` children born in Mexico to two Mexican-born parents as well as `r nrow(pisa_us)` children born to two Spanish-speaking immigrant parents in the U.S. Although PISA data for the U.S. do not include exact country of birth for parents, about two-thirds of the Hispanic population in the U.S. is of Mexican origin [@trevelyan_2016_characteristics, p. 12], rendering this an appropriate pseudo-control group.^[Previous studies show similar achievement among U.S.-born children of Spanish-speaking immigrants from a variety of origins. Using data from the Immigration and Intergenerational Mobility in Metropolitan Los Angeles (IIMMLA) survey and Children of Immigrants Longitudinal Study (CILS-III) for San Diego, Rumbaut [-@rumbaut_2008_coming, p. 222] finds that the high school grades of second-generation Mexican, Salvadoran, and Guatemalan students are very similar. Similarly, models by @glick_2007_academic show that in the Early Childhood Longitudinal Study, third-grade math scores for children of Mexican, Puerto Rican, and other Hispanic origin are indistinguishable.]  
+
+Outcome variables consist of reading, math, and science scores, which the OECD constructs to have a global mean of 500 and standard deviation of 100. I use the first five plausible values for reading, math, and science scores, combining estimates and calculating standard errors as suggested by the PISA Technical Reports.^[Although the 2015 and 2018 waves of PISA contain 10 plausible values, the 2012 data contains only 5. In pooled analysis of these different test years, I follow @teltemann_2020_standardized and @jerrim_2017_global in using five plausible values for all tests.]    
+
+Pre-migration control variables include mother's and father's education (measured in 6-category ISCED, entered as a continuous variable in regressions), cultural possessions, home educational resources, age, a categorical variable for early childhood education and care (ECEC), survey year, and two-category gender. I also consider post-migration variables as possible mediators. These include composite variables constructed by the OECD which I standardize to have a mean of 0 and standard deviation of 1 within waves: household wealth, home possessions, home information and communication technology (ICT) resources, and an index of economic, social and cultural status. I also include highest parental occupational status measured in the International Socio-Economic Index [@ganzeboom_1992_standard] and a dichotomous measure of urban locality, with one category for small and large cities and another for villages, small towns, and towns.
+
+
+
+# Methods
+
+Each research question is addressed using appropriate methods. To answer my first research question -- "What are the typical academic outcomes for U.S.-born children of return migrants in Mexico?" -- I present difference-in-means and OLS regression estimates comparing children of Mexican return migrants to both the Mexican and U.S. comparison samples. I incorporate pre-migration and post-migration attributes in turn as covariates in the OLS regressions to examine selection and integration processes. In all analyses, I cluster HC1 standard errors at the school level and incorporate final sampling weights.  
+
+My second research question is, "What kinds of heterogeneity are present in this sample?" I compare results from two different methods: principal components analysis (PCA) and exploratory factor analysis (EFA) [@everitt_2011_introduction]. In PCA, I use five continuous variables and I examine how many components are sufficient to explain the results. I and also regress the outcomes on all five principal components. For ECA, I test how many factors are appropriate, examine the factor loadings, and regress the outcomes on the factors. Finally, to address my third research question, I stratify the sample based on the first component or factor and examine how the effect of being a return migrant varies, when compared to the two reference samples. I also stratify by cluster membership based on two-cluster k-means cluster analysis [@james_2021_introduction] and repeat the comparisons.
+
+
+
+
+```{r stats}
+bind_rows(
+  rubin_means(pisa_mex, labels = c('Mexico', 'U.S.')) %>%
+    mutate(Country = 'Mexico') %>%
+    select(Outcome, `Country of Residence` = Country, `Birth Country` = label, n, Mean, SD),
+  rubin_means(pisa_mex_us, labels = c('U.S.', 'Mexico')) %>%
+    filter(label == 'U.S.') %>%
+    mutate(`Birth Country` = 'U.S.') %>%
+    select(Outcome, `Country of Residence` = label, `Birth Country`, n, Mean, SD)
+  ) %>%
+  select(-SD) %>% 
+  pivot_wider(names_from = Outcome, values_from = Mean) %>%
+  # flextable::flextable() %>%
+  # flextable::set_caption('Sample sizes and PISA score means') %>%
+  # flextable::add_footer_lines('Source: PISA data for 2012, 2015, and 2018. Author\'s calculations. The Mexico country, U.S. birth country sample includes only children of Mexican immigrants. The U.S. country, U.S. birth country sample includes only children born to Spanish-speaking immigrant parents. Mean estimates incorporate sampling weights and account for clustering within schools.') %>%
+  # flextable::autofit() %>%
+  # flextable::fit_to_width(7.5)
+  kable(booktabs = T, linesep = "",
+        caption = 'Sample sizes and PISA score means. The Mexico country, U.S. birth country sample includes only children of Mexican immigrants. The U.S. country, U.S. birth country sample includes only children born to Spanish-speaking immigrant parents. Mean estimates incorporate sampling weights and account for clustering within schools.') %>%
+  footnote(general = 'PISA data for 2012, 2015, and 2018. Author\'s calculations.',
+           general_title = 'Source:',
+           threeparttable = T,
+           footnote_as_chunk = T)
+  
+  # df %>%
+#   arrange(Outcome) %>%
+#   pivot_wider(names_from = 'Outcome', values_from = c('Mean', 'SD')) %>%
+#   flextable() %>%
+#   add_header_row(colwidths = c(3,2,2,2), values = c('', 'Reading', 'Math', 'Science'))
+  
+  
+  # bind_rows(
+  # pisa_mex %>%
+  #   group_by(country, birth_country) %>%
+  #   summarize(n = n(),
+  #             Reading = mean(read1),
+  #             `Reading SD` = sd(read1),
+  #             Math = mean(math1),
+  #             `Math SD` = sd(math1),
+  #             Science = mean(scie1),
+  #             `Science SD` = sd(scie1)),
+  # pisa_us %>%
+  #   group_by(country, birth_country) %>%
+  #   summarize(n = n(),
+  #             Reading = mean(read1),
+  #             `Reading SD` = sd(read1),
+  #             Math = mean(math1),
+  #             `Math SD` = sd(math1),
+  #             Science = mean(scie1),
+  #             `Science SD` = sd(scie1))) %>%
+  # rename(`Birth Country` = birth_country,
+  #        Country = country) %>%
+```
+
+
+# Results
+
+## Typical Outcomes for the Full Sample
+
+The first set of analyses compares the 0.5 generation to local children in Mexico. Table \@ref(tab:stats) presents sample sizes, mean scores, and standard deviations for the three samples. Although mean scores for all groups in the table are below the global average of 500, U.S.-born children in Mexico tend to score somewhat higher than Mexican-born children, especially in math.  
+
+
+
+```{r models, include = F, results = 'hide'}
+dim_fig_mex <-
+  bind_rows(rubin(pisa_mex, 'DIM'),
+          rubin(pisa_mex, 'OLS (pre-migration)', 'mom_ed + dad_ed + female + early_ed +cultural_pos + home_ed + age + year'),
+          rubin(pisa_mex, 'OLS (pre- & post-migration)',
+                covariates = 'mom_ed + dad_ed + female + early_ed +
+                cultural_pos + home_ed + age + year + non_urban +
+                wealth + home_pos + ict_res + escs + parent_isei')
+) %>%
+  mutate(Outcome = recode_factor(Outcome,
+                                 'read' = 'Reading',
+                                 'math' = 'Math',
+                                 'scie' = 'Science'),
+            sample = factor(sample, 
+                            levels = c('DIM', 'OLS (pre-migration)', 'OLS (pre- & post-migration)')))
+
+
+```
+
+```{r dim-mex, results = 'hide', fig.height = 3.5, fig.cap = "Difference-in-means (DIM) and OLS estimates comparing children of return migrants in Mexico to children in Mexico. Error bars represent 95% asymptotic confidence intervals. OLS (pre-migration) models adjust for parents' education, cultural possessions, home educational resources, age, ECEC, gender, and survey year. OLS (post-migration) models additionally adjust for household wealth; home possessions; home ICT resources; an index of economic, social and cultural status; urban or non-urban locality; and highest parental ISEI. All models cluster standard errors at the school level and incorporate sampling weights."}
+dim_fig_mex %>%
+  ggplot(aes(x = sample, y = Estimate, color = Outcome)) +
+  geom_point(position = position_dodge(0.2)) +
+  geom_errorbar(aes(ymin = Estimate - 1.96*se, ymax = Estimate + 1.96*se),
+                width = 0, alpha = 1, position = position_dodge(0.2)) +
+  geom_hline(yintercept = 0) +
+  labs(x = '', y = 'Estimated difference in PISA score') +
+  theme(#axis.text.x=element_text(angle=-15),
+        legend.justification=c(1,0), 
+        legend.position=c(.4,.7))
+
+
+
+```
+
+Figure \@ref(fig:dim-mex) compares PISA scores of children of return migrants in Mexico to the local Mexican-born sample using difference-in-means (DIM) and ordinary least squares (OLS). (Coefficients for both OLS models are presented in the Supplementary Material.) The error bars show 95-percent asymptotic confidence intervals. We first consider the DIM estimates, which subtract the average reading, math, or science scores for children of return migrants from the scores for the comparison group. Compared to other adolescents in Mexico, children of return migrants perform somewhat better in all three subjects. The difference amounts to `r with(dim_fig_mex, Estimate[sample == 'DIM' & Outcome == 'Reading'])` in reading, `r with(dim_fig_mex, Estimate[sample == 'DIM' & Outcome == 'Math'])` in math, and `r with(dim_fig_mex, Estimate[sample == 'DIM' & Outcome == 'Science'])` in science. The math advantage is significant and reaches one-fifth of a standard deviation, while the differences are not significant for reading and science. The next set of estimates adjusts for pre-migration characteristics in a linear regression estimated by OLS. The advantage for each score does not diminish and is more precisely estimated. The 0.5 generation performs as well as or better than similar Mexican-born children, especially in math.  
+
+These results are contrary to most previous work on return migrant children's experiences: rather than struggling academically, these children are doing at least as well or better than the general population of Mexican-born children. Despite the travails of migration, these children are not academically disadvantaged compared to their Mexican peers, attaining somewhat higher scores, at least in math.
+
+The third set of estimates, "OLS (post-migration)", includes possible post-migration mediators of the advantage possessed by members of the 0.5 generation. These include household wealth; home possessions; home information and communication technology (ICT) resources; an index of economic, social and cultural status; urban or non-urban locality; and highest parental occupational status (in ISEI). The academic advantaged enjoyed by the 0.5 generation does not diminish and is estimated more precisely. These models suggest that material circumstances do not account for these children's higher scores. It seems more likely that cultural and legal advantages of a bicultural education, better resourced U.S. schools, potential dual nationality, and freedom from social markers of difference have provided these children with advantages to succeed in school.  
+
+We now turn to comparisons between the 0.5 generation in Mexico and children of Spanish-speaking immigrants in the U.S. This pseudo-control group allows us to address the counterfactual question: what would have happened to these children had they not migrated to Mexico? Descriptive statistics in Table \@ref(tab:stats) shows that although the 0.5 generation achieves somewhat higher scores than their Mexican-born peers, the U.S. comparison group performs much higher.  
+
+```{r dim-us, results = 'hide', fig.height = 3.5, fig.cap = "Difference-in-means (DIM) and OLS estimates comparing children of return migrants in Mexico to children of Spanish-speaking immigrants in the U.S. Error bars represent 95% asymptotic confidence intervals. OLS (pre-migration) models adjust for parents' education, cultural possessions, home educational resources, age, ECEC, gender, and survey year. OLS (post-migration) models additionally adjust for household wealth; home possessions; home ICT resources; an index of economic, social and cultural status; urban or non-urban locality; and highest parental ISEI. All models cluster standard errors at the school level and incorporate sampling weights."}
+dim_fig_us <-
+  bind_rows(rubin(pisa_mex_us, 'DIM', weights = 'senate_weight'),
+          rubin(pisa_mex_us, 'OLS (pre-migration)', 
+                'mom_ed + dad_ed + female + early_ed +cultural_pos + home_ed + age + year',
+                weights = 'senate_weight'),
+          rubin(pisa_mex_us, 'OLS (pre- & post-migration)',
+                covariates = 'mom_ed + dad_ed + female + early_ed +
+                cultural_pos + home_ed + age + year + 
+                wealth + home_pos + ict_res + escs + parent_isei', 
+                weights = 'senate_weight')
+          ) %>%
+  mutate(Outcome = recode_factor(Outcome,
+                                 'read' = 'Reading',
+                                 'math' = 'Math',
+                                 'scie' = 'Science'),
+            sample = factor(sample, 
+                            levels = c('DIM', 'OLS (pre-migration)', 'OLS (pre- & post-migration)')))
+
+dim_fig_us %>%
+  ggplot(aes(x = sample, y = Estimate, color = Outcome)) +
+  geom_point(position = position_dodge(0.2)) +
+  geom_errorbar(aes(ymin = Estimate - 1.96*se, ymax = Estimate + 1.96*se),
+                width = 0, alpha = 1, position = position_dodge(0.2)) +
+  geom_hline(yintercept = 0) +
+  labs(x = 'Method', y = '') +
+  theme(#axis.text.x=element_text(angle=-15),
+        legend.justification=c(1,0), 
+        legend.position=c(.45,.05))
+```
+
+In Figure \@ref(fig:dim-us), unadjusted difference-in-means estimates show stark negative differences: `r with(dim_fig_us, Estimate[sample == 'DIM' & Outcome == 'Reading'])` in reading, `r with(dim_fig_us, Estimate[sample == 'DIM' & Outcome == 'Math'])` in math, and `r with(dim_fig_us, Estimate[sample == 'DIM' & Outcome == 'Science'])` in science. These amount to the 0.5 generation achieving math scores one-fifth of a standard deviation lower than their U.S. counterparts, and reading and science disparities are closer to half of a standard deviation. Despite being star students in Mexico, these children struggle on PISA exams much more than children of Spanish-speaking immigrants in the U.S.  
+
+The final set of estimates in Figure \@ref(fig:dim-us) adjusts for pre- and post-migration characteristics. Estimated disparities become even more negative, although they are not significantly different from the DIM estimates. This suggests that it is neither selection nor the post-migration material experience of the 0.5 generation that accounts for their lower achievement compared to the U.S. Rather, it is likely that the lower resources of Mexican schools as well as the stress of adapting to an unfamiliar society are the contributing factors.  
+
+## Latent Structure: Principal Components Analysis
+To begin our exploration of the latent structure of the data, I use Principal Components Analysis (PCA). For this, I restrict focus to five continuous variables: mother's education, father's education, index for cultural possessions, index for home educational environment, and age. I use the `princomp` function in R to derive the principal components of the correlation matrix. Based on the scree plot (Figure \@ref(fig:pca-scree)), we focus on the first two components, which explain almost 60 percent the variance (see Table \@ref(tab:pca-var)).  
+
+Table \@ref(tab:pca-coefs) shows the coefficients for the five principal components. The first component has relatively large, positive coefficients for all variables except age. We might label this one "overall advantage." The second component has positive coefficients for parents' education but negative coefficients for the other variables, and the coefficient for age is large in magnitude. Students with high scores for this component have educated parents but relatively low cultural and home educational resources, and tend to be younger; we might call this component "capital mismatch," since the objectified cultural capital at home does not match the embodied cultural capital of parental education [@bourdieu_1986_forms].  
+
+```{r pca-dat}
+data_mat <-  pisa_mex %>%
+  filter(treat == T) %>%
+  select(mom_ed, dad_ed, cultural_pos, home_ed, age) %>% #, year, early_ed) %>%
+  drop_na()
+  # fastDummies::dummy_cols(remove_selected_columns = T)
+# pca_out <-  prcomp(data_mat, center = T, scale. = T)
+pca_out <-  princomp(data_mat, cor = T)
+```
+
+```{r pca-scree, fig.cap = 'Scree plot of PCA'}
+
+tibble(`Component number` = 1:5, `Component variance` = pca_out$sdev^2) %>%
+  ggplot(aes(x = `Component number`, y = `Component variance`)) + 
+  geom_line() + geom_point()
+
+```
+
+```{r pca-var}
+pca_importance <- function(x) {
+  vars <- x$sdev^2
+  vars <- vars/sum(vars)
+  rbind(`Standard deviation` = x$sdev, `Proportion of Variance` = vars, 
+      `Cumulative Proportion` = cumsum(vars))
+}
+kable(pca_importance(pca_out), 
+      booktabs = T,
+      caption = 'Relative importance of principal components')
+```
+
+```{r pca-coefs}
+data.frame(matrix(as.numeric(pca_out$loadings), 
+           attributes(pca_out$loadings)$dim, 
+           dimnames=attributes(pca_out$loadings)$dimnames)) %>%
+  kable(booktabs = T,
+        caption = 'PCA Coefficients')
+```
+
+```{r pca-2, eval = F, fig.cap = 'Scores for the first two principal components'}
+# Graph the first two principal components
+ggplot(as.data.frame(pca_out$scores), aes(x = Comp.1, y = Comp.2)) +
+  geom_point()  +
+  labs(x = 'Component 1', y = 'Component 2')
+```
+
+
+
+
+
+```{r pca-reg-tab}
+dataset <- pisa_mex %>%
+  filter(treat == T) %>%
+  bind_cols(as.data.frame(pca_out$scores))
+
+# dim_list <- list()
+# 
+# for(outcome in c('read', 'math', 'scie')){
+#   est_ols <- list()
+#   var_ols <- list()
+#   for(pv in 1:pv_num){
+#     lm_model <- lm(paste0(outcome, pv, ' ~ Comp.1 + Comp.2 + Comp.3 + Comp.4 + Comp.5'), 
+#                    data = dataset, weights = weight)
+#     est_ols[[pv]] <- tidy(lm_model)[,2]
+#     var_ols[[pv]] <- vcovCL(lm_model, cluster = dataset[, 'school_id'])[,2]
+#   }
+#   est_ols_mat <- plyr::laply(est_ols, as.matrix)
+#   var_ols_mat <- plyr::laply(var_ols, as.matrix)
+#   est_out_ols <- apply(est_ols_mat, 2, mean)
+#   var_samp_ols <- apply(var_ols_mat, 2, mean)
+#   est_ols - est_out_ols
+#   for(i in 1:5){
+#     
+#   }
+#   var_imp_ols <- rowSums(apply(est_ols_mat, 1, function(x){(x - est_out_ols)^2}))/4
+#   se_out_ols <- sqrt(var_samp_ols + (1 + 1/5)*var_imp_ols)
+#   
+#   dim_list[[outcome]] <-
+#     data.frame(Outcome = outcome,
+#                variable = names(var_samp_ols),
+#                Estimate = est_out_ols,
+#                se = se_out_ols)
+# }
+# dim_df_out <- dim_list %>%
+#   bind_rows() %>%
+#   mutate(Outcome = recode_factor(Outcome,
+#                                'read' = 'Reading',
+#                                'math' = 'Math',
+#                                'scie' = 'Science')) 
+
+
+read_mod <- lm(read1 ~ Comp.1 + Comp.2 + Comp.3 + Comp.4 + Comp.5, dataset, weights = weight)
+math_mod <- lm(math1 ~ Comp.1 + Comp.2 + Comp.3 + Comp.4 + Comp.5, dataset, weights = weight)
+scie_mod <- lm(scie1 ~ Comp.1 + Comp.2 + Comp.3 + Comp.4 + Comp.5, dataset, weights = weight)
+
+mod_list <- list('Reading' = read_mod, 'Math' = math_mod, 'Science' = scie_mod)
+
+robust_list <- list()
+for(mod_num in 1:length(mod_list)){
+  robust_list[[mod_num]] <- coeftest(mod_list[[mod_num]], 
+                                     vcov = vcovCL(mod_list[[mod_num]], cluster = ~ school_id), 
+                                     save = T)
+}
+names(robust_list) <- names(mod_list)
+
+
+huxtable::huxreg(robust_list,
+       note = "{stars}. School-clustered standard errors shown in parentheses.",
+       stars = c(`†` = 0.1, `*` = 0.05, `**` = 0.01, `***` = 0.001),
+       statistics = c('Observations' = 'nobs')) %>%
+  huxtable::set_caption('Weighted OLS regressions of reading, math, and science scores on five principal Components.') %>%
+  huxtable::set_width(1) %>%
+  huxtable::set_all_padding(0) 
+```
+Table \@ref(tab:pca-reg-tab) regresses reading, math, and science scores on all six principal components for just the sample of 0.5 generation in Mexico. Component 1, "general advantaged," has a strong positive effect, as we might expect. Component two, "capital mismatch," shows negative effect that is larger in absolute value than Component 1, but is somewhat less precisely estimated. This implies that the children of more educated parents that have little objectified cultural capital in the home tend to perform poorly on PISA tests.
+
+
+
+
+```{r pca-hist, fig.cap = 'Density plot of first principal componenet'}
+
+pca_out$scores %>%
+  as.data.frame() %>%
+  ggplot(aes(x = Comp.1)) + 
+  geom_density() 
+
+
+# summary(lm(pisa_mex$read1[pisa_mex$treat == 1] ~ pca_out$scores))
+```
+
+Figure \@ref(fig:pca-hist) shows the density plot of the first component. With two humps, it appears bimodal. I use this component to categorize the students into two groups: those with a score above 0 are "advantaged," and those 0 and below are "disadvantaged." What happens if we repeat the difference-in-means analysis is repeated with each of these groups separately?
+
+
+```{r pca-dim, fig.cap = 'Difference-in-means estimates between the Mexican 0.5 generation\'s PISA scores and comparison groups, with "advantaged" and "disadvantaged" groups separately, as defined by scores on Component 1 from PCA.'}
+pisa_mex_pca <- pisa_mex %>%
+  filter(treat == T) %>%
+  mutate(pc_adv = pca_out$scores[,1]) %>%
+  bind_rows(pisa_mex %>%
+              filter(treat == F))
+pisa_mex_adv <- filter(pisa_mex_pca, pc_adv > 0 | treat == F)
+pisa_mex_disadv <- filter(pisa_mex_pca, pc_adv <= 0 | treat == F)
+
+# dim_fig_mex_adv <-
+#   bind_rows(rubin(pisa_mex_adv, 'DIM'),
+#           rubin(pisa_mex_adv, 'OLS (pre-migration)', 'mom_ed + dad_ed + female + early_ed +cultural_pos + home_ed + age + year'),
+#           rubin(pisa_mex_adv, 'OLS (pre- & post-migration)',
+#                 covariates = 'mom_ed + dad_ed + female + early_ed +
+#                 cultural_pos + home_ed + age + year + non_urban +
+#                 wealth + home_pos + ict_res + escs + parent_isei')
+# ) %>%
+#   mutate(Outcome = recode_factor(Outcome,
+#                                  'read' = 'Reading',
+#                                  'math' = 'Math',
+#                                  'scie' = 'Science'),
+#             sample = factor(sample, 
+#                             levels = c('DIM', 'OLS (pre-migration)', 'OLS (pre- & post-migration)')),
+#          group = 'Advantaged')
+# 
+# dim_fig_mex_disadv <-
+#   bind_rows(rubin(pisa_mex_disadv, 'DIM'),
+#           rubin(pisa_mex_disadv, 'OLS (pre-migration)', 'mom_ed + dad_ed + female + early_ed +cultural_pos + home_ed + age + year'),
+#           rubin(pisa_mex_disadv, 'OLS (pre- & post-migration)',
+#                 covariates = 'mom_ed + dad_ed + female + early_ed +
+#                 cultural_pos + home_ed + age + year + non_urban +
+#                 wealth + home_pos + ict_res + escs + parent_isei')
+# ) %>%
+#   mutate(Outcome = recode_factor(Outcome,
+#                                  'read' = 'Reading',
+#                                  'math' = 'Math',
+#                                  'scie' = 'Science'),
+#             sample = factor(sample, 
+#                             levels = c('DIM', 'OLS (pre-migration)', 'OLS (pre- & post-migration)')), group = 'Disadvantaged')
+
+
+# bind_rows(dim_fig_mex_adv,  dim_fig_mex_disadv) %>%
+#   ggplot(aes(x = sample, y = Estimate, color = Outcome)) +
+#   geom_point(position = position_dodge(0.2)) +
+#   geom_errorbar(aes(ymin = Estimate - 1.96*se, ymax = Estimate + 1.96*se),
+#                 width = 0, alpha = 1, position = position_dodge(0.2)) +
+#   geom_hline(yintercept = 0) +
+#   facet_wrap(~group) +
+#   labs(x = '', y = 'Estimated difference in PISA score') +
+#   theme(axis.text.x=element_text(angle=-15),
+#         legend.justification=c(1,0), 
+#         legend.position=c(.4,.7))
+
+pisa_mex_us_pca <- pisa_mex_us %>%
+  filter(treat == T) %>%
+  mutate(pc_adv = pca_out$scores[,1]) %>%
+  bind_rows(pisa_mex_us %>%
+              filter(treat == F))
+pisa_mex_us_adv <- filter(pisa_mex_us_pca, pc_adv > 0 | treat == F)
+pisa_mex_us_disadv <- filter(pisa_mex_us_pca, pc_adv <= 0 | treat == F)
+
+# dim_fig_mex_adv <-
+#   bind_rows(rubin(pisa_mex_us_adv, 'DIM'),
+#           rubin(pisa_mex_us_adv, 'OLS (pre-migration)', 'mom_ed + dad_ed + female + early_ed +cultural_pos + home_ed + age + year'),
+#           rubin(pisa_mex_us_adv, 'OLS (pre- & post-migration)',
+#                 covariates = 'mom_ed + dad_ed + female + early_ed +
+#                 cultural_pos + home_ed + age + year + non_urban +
+#                 wealth + home_pos + ict_res + escs + parent_isei')
+# ) %>%
+#   mutate(Outcome = recode_factor(Outcome,
+#                                  'read' = 'Reading',
+#                                  'math' = 'Math',
+#                                  'scie' = 'Science'),
+#             sample = factor(sample, 
+#                             levels = c('DIM', 'OLS (pre-migration)', 'OLS (pre- & post-migration)')),
+#          group = 'Advantaged')
+# 
+# dim_fig_mex_disadv <-
+#   bind_rows(rubin(pisa_mex_us_disadv, 'DIM'),
+#           rubin(pisa_mex_us_disadv, 'OLS (pre-migration)', 'mom_ed + dad_ed + female + early_ed +cultural_pos + home_ed + age + year'),
+#           rubin(pisa_mex_us_disadv, 'OLS (pre- & post-migration)',
+#                 covariates = 'mom_ed + dad_ed + female + early_ed +
+#                 cultural_pos + home_ed + age + year + non_urban +
+#                 wealth + home_pos + ict_res + escs + parent_isei')
+# ) %>%
+#   mutate(Outcome = recode_factor(Outcome,
+#                                  'read' = 'Reading',
+#                                  'math' = 'Math',
+#                                  'scie' = 'Science'),
+#             sample = factor(sample, 
+#                             levels = c('DIM', 'OLS (pre-migration)', 'OLS (pre- & post-migration)')), group = 'Disadvantaged')
+
+bind_rows(
+  mutate(rubin(pisa_mex_adv, 'PC1: Advantaged'), Country = 'Mexico'),
+  mutate(rubin(pisa_mex_disadv, 'PC1: Disadvantaged'), Country = 'Mexico'),
+  mutate(rubin(pisa_mex_us_adv, 'PC1: Advantaged'), Country = 'U.S.'),
+  mutate(rubin(pisa_mex_us_disadv, 'PC1: Disadvantaged'), Country = 'U.S.')
+) %>%
+  mutate(Outcome = recode_factor(Outcome,
+                                 'read' = 'Reading',
+                                 'math' = 'Math',
+                                 'scie' = 'Science')) %>%
+  ggplot(aes(x = Country, y = Estimate, color = Outcome)) +
+  geom_point(position = position_dodge(0.2)) +
+  geom_errorbar(aes(ymin = Estimate - 1.96*se, ymax = Estimate + 1.96*se),
+                width = 0, alpha = 1, position = position_dodge(0.2)) +
+  geom_hline(yintercept = 0) +
+  facet_wrap(~sample) +
+  labs(x = '', y = 'Estimated difference in PISA score') +
+  theme(axis.text.x=element_text(angle=-15),
+        legend.justification=c(1,0), 
+        legend.position=c(.2,.1))
+```
+
+
+Figure \@ref(fig:pca-dim) presents difference-in-means for the Mexico and U.S. comparison samples, for the "advantaged" and "disadvantaged" groups separately. For the advantaged group, PISA scores are higher than for the full sample; the advantage when compared to the general Mexican population is clear. The disadvantaged group, on the other hand, shows no significant differences from Mexican adolescents. When we compare to the U.S. sample, differences between the advantaged and disadvantaged subsamples are less stark; both obtain scores far below the U.S. average, although the estimated difference for math for the advantaged group is not significant.  
+
+Next I try k-means clustering, clustering the first two principal components into two clusters. Table \@ref(tab:pca-clust-tab) presents the mean variables for each cluster; Cluster 1 appears disadvantaged, while Cluster 2 appears advantaged. Figure \@ref(fig:pca-clust-fig) again presents a difference-in-means analysis, restricting the 0.5 generation sample to one of the two clusters. Results are very similar to Figure \@ref(fig:pca-dim), with the disadvantaged (Cluster 1) showing no difference with the Mexican comparison group but large negative differences compared to the U.S. group. The advantaged (Cluster 2) again show positive score differences from the Mexican comparison group, while the differences with the U.S. control group are small.
+
+
+```{r pca-clust-tab}
+set.seed(185)
+# twss <- data.frame(clusters = 1:10, twss = NA)
+# for(k in 1:10){
+#   kmeans_out <- kmeans(pca_out$scores[,1:2], k)
+#   twss[k,'twss'] <- kmeans_out$tot.withinss
+# }
+# 
+# ggplot(twss, aes(x = clusters, y = twss)) +
+#   geom_line() + geom_point()
+
+
+kmeans_out <- kmeans(pca_out$scores[,1:2], 2)
+
+
+
+pisa_mex_clust <- pisa_mex %>%
+  filter(treat == T) %>%
+  mutate(cluster = kmeans_out$cluster) %>%
+  bind_rows(pisa_mex %>%
+              filter(treat == F))
+
+pisa_mex_us_clust <- pisa_mex_us %>%
+  filter(treat == T) %>%
+  mutate(cluster = kmeans_out$cluster) %>%
+  bind_rows(pisa_mex_us %>%
+              filter(treat == F))
+
+pisa_mex_clust %>%
+  filter(treat == 1) %>%
+  group_by(cluster) %>%
+  summarize(across(c(mom_ed, dad_ed, cultural_pos, home_ed, age), mean)) %>%
+  kable(booktabs = T, 
+        caption = 'Variables means for two-cluster k-means clustering of first two PCA components')
+```
+
+
+
+```{r pca-clust-fig, fig.cap = 'Difference-in-means estimates between the Mexican 0.5 generation\'s PISA scores and comparison groups, with k-means clustered groups separately, as defined by scores on the first two components from PCA.'}
+pisa_mex_1 <- filter(pisa_mex_clust, cluster == 1 | treat == F)
+pisa_mex_2 <- filter(pisa_mex_clust, cluster == 2 | treat == F)
+pisa_mex_us_1 <- filter(pisa_mex_us_clust, cluster == 1 | treat == F)
+pisa_mex_us_2 <- filter(pisa_mex_us_clust, cluster == 2 | treat == F)
+
+
+
+bind_rows(
+  mutate(rubin(pisa_mex_1, 'Cluster 1 (Disadvantaged)'), Country = 'Mexico'),
+  mutate(rubin(pisa_mex_2, 'Cluster 2 (Advantaged)'), Country = 'Mexico'),
+  mutate(rubin(pisa_mex_us_1, 'Cluster 1 (Disadvantaged)'), Country = 'U.S.'),
+  mutate(rubin(pisa_mex_us_2, 'Cluster 2 (Advantaged)'), Country = 'U.S.')
+) %>%
+  mutate(Outcome = recode_factor(Outcome,
+                                 'read' = 'Reading',
+                                 'math' = 'Math',
+                                 'scie' = 'Science')) %>%
+  ggplot(aes(x = Country, y = Estimate, color = Outcome)) +
+  geom_point(position = position_dodge(0.2)) +
+  geom_errorbar(aes(ymin = Estimate - 1.96*se, ymax = Estimate + 1.96*se),
+                width = 0, alpha = 1, position = position_dodge(0.2)) +
+  geom_hline(yintercept = 0) +
+  facet_wrap(~sample) +
+  labs(x = '', y = 'Estimated difference in PISA score') +
+  theme(axis.text.x=element_text(angle=-15),
+        legend.justification=c(1,0), 
+        legend.position=c(.2,.1))
+```
+
+
+
+
+
+## Latent Structure: Exploratory Factor Analysis
+
+```{r efa-pval, eval = F}
+sapply(1:2, function(f){factanal(data_mat, factors = f, method = 'mle')$PVAL})
+```
+
+For Exploratory Factor Analysis, first we use a formal test of the number of factors using the Maximum Likelihood approach. The p-value for one factor is `r factanal(data_mat, factors = 1, method = 'mle')$PVAL`, while for two factors it is `r factanal(data_mat, factors = 2, method = 'mle')$PVAL`. Hence a two-factor solution appears most appropriate.  
+
+The two-factor call to `factanal` in R produces the following output:
+
+```{r efa-out}
+efa_out <- factanal(data_mat, factors = 2, method = 'mle', scores = 'regression')
+efa_out
+
+pisa_mex_efa <- pisa_mex %>%
+  filter(treat == T) %>%
+  bind_cols(as.data.frame(efa_out$scores)) %>%
+  bind_rows(pisa_mex %>%
+              filter(treat == F))
+```
+
+Factor 1 has strong loadings for home environment: cultural possessions and (especially) home educational environment. We call this factor "home environment." Factor 2 has strong loadings for parents' education, with moderate loadings for cultural possessions. We call this factor "parents' education and culture."
+
+```{r efa-reg-tab}
+read_mod <- lm(read1 ~ Factor1 + Factor2, pisa_mex_efa, weights = weight)
+math_mod <- lm(math1 ~ Factor1 + Factor2, pisa_mex_efa, weights = weight)
+scie_mod <- lm(scie1 ~ Factor1 + Factor2, pisa_mex_efa, weights = weight)
+
+mod_list <- list('Reading' = read_mod, 'Math' = math_mod, 'Science' = scie_mod)
+
+robust_list <- list()
+for(mod_num in 1:length(mod_list)){
+  robust_list[[mod_num]] <- coeftest(mod_list[[mod_num]], 
+                                     vcov = vcovCL(mod_list[[mod_num]], cluster = ~ school_id), 
+                                     save = T)
+}
+names(robust_list) <- names(mod_list)
+
+
+huxtable::huxreg(robust_list,
+       note = "{stars}. School-clustered standard errors shown in parentheses.",
+       stars = c(`†` = 0.1, `*` = 0.05, `**` = 0.01, `***` = 0.001),
+       statistics = c('Observations' = 'nobs')) %>%
+  huxtable::set_caption('Weighted OLS regressions of reading, math, and science scores on two factors from exploratory factor analysis.') %>%
+  huxtable::set_width(1) %>%
+  huxtable::set_all_padding(0) 
+```
+
+Table \@ref(tab:efa-reg-tab) regresses reading, math, and science scores on each factor. Factor 1 has strong, positive effects on each subject score, whereas Factor 2 has no significant effect. It appears that home environment has a more important impact that parents' education.
+
+
+```{r efa-plot, eval = F}
+
+# Plot scores
+ggplot(pisa_mex_efa, aes(x = Factor1, y = Factor2, color = read1)) +
+  geom_point() + scale_color_gradient(low = 'black', high = 'green')
+
+
+plot(density(pisa_mex_efa$Factor1, na.rm = T))
+mean(pisa_mex_efa$Factor1, na.rm = T)
+```
+
+```{r efa-hist, fig.cap = 'Density plot of first factor'}
+
+efa_out$scores %>%
+  as.data.frame() %>%
+  ggplot(aes(x = Factor1)) + 
+  geom_density() 
+
+# summary(lm(pisa_mex$read1[pisa_mex$treat == 1] ~ pca_out$scores))
+```
+
+Figure \@ref(fig:pca-hist) shows the density plot of the first component. I use this factor to categorize the students into two groups: those with a score above 0 are "advantaged," and those 0 and below are "disadvantaged." As above, we repeat the difference-in-means analyses using only advantaged or only disadvantaged students.
+
+
+```{r efa-dim, fig.cap = 'Difference-in-means estimates between the Mexican 0.5 generation\'s PISA scores and comparison groups, with "advantaged" and "disadvantaged" groups separately, as defined by scores on Factor 1 from EFA.'}
+pisa_mex_efa <- pisa_mex %>%
+  filter(treat == T) %>%
+  mutate(f_adv = efa_out$scores[,1]) %>%
+  bind_rows(pisa_mex %>%
+              filter(treat == F))
+pisa_mex_adv <- filter(pisa_mex_efa, f_adv > 0 | treat == F)
+pisa_mex_disadv <- filter(pisa_mex_efa, f_adv <= 0 | treat == F)
+
+pisa_mex_us_efa <- pisa_mex_us %>%
+  filter(treat == T) %>%
+  mutate(f_adv = pca_out$scores[,1]) %>%
+  bind_rows(pisa_mex_us %>%
+              filter(treat == F))
+pisa_mex_us_adv <- filter(pisa_mex_us_efa, f_adv > 0 | treat == F)
+pisa_mex_us_disadv <- filter(pisa_mex_us_efa, f_adv <= 0 | treat == F)
+
+
+bind_rows(
+  mutate(rubin(pisa_mex_adv, 'Factor 1: Advantaged'), Country = 'Mexico'),
+  mutate(rubin(pisa_mex_disadv, 'Factor 1: Disadvantaged'), Country = 'Mexico'),
+  mutate(rubin(pisa_mex_us_adv, 'Factor 1: Advantaged'), Country = 'U.S.'),
+  mutate(rubin(pisa_mex_us_disadv, 'Factor 1: Disadvantaged'), Country = 'U.S.')
+) %>%
+  mutate(Outcome = recode_factor(Outcome,
+                                 'read' = 'Reading',
+                                 'math' = 'Math',
+                                 'scie' = 'Science')) %>%
+  ggplot(aes(x = Country, y = Estimate, color = Outcome)) +
+  geom_point(position = position_dodge(0.2)) +
+  geom_errorbar(aes(ymin = Estimate - 1.96*se, ymax = Estimate + 1.96*se),
+                width = 0, alpha = 1, position = position_dodge(0.2)) +
+  geom_hline(yintercept = 0) +
+  facet_wrap(~sample) +
+  labs(x = '', y = 'Estimated difference in PISA score') +
+  theme(axis.text.x=element_text(angle=-15),
+        legend.justification=c(0,0), 
+        legend.position=c(.1,.1))
+```
+
+
+Figure \@ref(fig:efa-dim) presents difference-in-means for the Mexico and U.S. comparison samples, for the Factor 1-defined "advantaged" and "disadvantaged" groups separately. Results are extremely similar to those in Figure \@ref(fig:pca-dim) and Figure \@ref(fig:pca-clust-fig): when we restrict attention to students with high scores on Factor 1, a clear advantage relative to Mexican-born adolescents becomes clear, while the disadvantage relative to U.S. students becomes smaller. The disadvantaged group null or sharply negative differences with the Mexican and U.S. comparison groups, respectively.
+
+# Discussion and Conclusion
+
+This paper aimed to quantify the educational situation of U.S.-born children of return migrants in Mexico. Previous research on this "0.5 generation" [@zuniga_2018_ninas] has presented a mixed picture: although these children face stigma, language difficulties, and bureaucratic hurdles [@gonzalez_2016_moving; @despagne_2019_adaptation; @zuniga_2018_generation; @gandara_2020_students; @mateos_2019_mestizo], some scholars have documented the advantages bestowed by bicultural facility and time in relatively well resourced U.S. schools, at least for some of these students [@zuniga_2018_ninas; @bybee_2020_estamos; @hernandez-leon_2020_imperfect]. To help settle this empirical question, I presented two types of comparisons using PISA data and explored the latent structure of the data. First, in the tradition of assimilation and integration studies, I compared the 0.5 generation to the general population of Mexican 15-year-olds. Second, I compared these adolescents to a pseudo-control group: children of Spanish-speaking immigrants in the U.S. While the first comparison presents the descriptive perspective of Mexican society, the second gets closer to estimating a causal effect of migration, or the scores that these students would have obtained had their families not returned to Mexico. In addition, models that control for pre-migration attributes allow explicit examination of the effect of immigrant selection. By considering two countries in cross-border perspective [@waldinger_2017_crossborder], this paper yields deeper insights than analyses bounded by a single national unit.    
+
+In the comparisons with Mexican children, I find few disparities: the 0.5 generation performs just as well Mexican children on reading and science PISA tests, and they outperform locals in math by one-fifth of a standard deviation. These effects remain nearly unchanged in models that control for both pre- and post-migration attributes, and the potential moderators of gender, urban or rural locality, and age at migration make little difference. Comparisons with the U.S. sample, however, tell a story of disadvantage. Juxtaposed with this pseudo-control group, children of Mexican return migrants obtain much lower scores, ranging from one-quarter to one-half of a standard deviation. Controlling for pre- or post-migration family characteristics does little to change effect estimates.  
+
+Attempts to explore the latent structure of the data revealed moderate amounts of heterogeneity. PCA suggested that two components explain a sufficient amount of variance in the five continuous covariates, which I labeled "overall advantaged" and "capital mismatch." For EFA, the data suggested a two-factor solution was sufficient, and I labeled the factors "home environment" and "parents' education and culture." In a regression analysis, only the first factor had a significant effect.
+
+I then partitioned the sample in three ways: based on PCA component 1, a two-cluster k-means clustering of the first two PCA components, and based on factor 1 from EFA. I then calculated differences in means for each partition separately with the reference groups. Results from all three analyses were substantively the same: no matter how advantage was defined, the advantaged partition performed better than the Mexican group only somewhat worse than the U.S. group, while the disadvantaged partition performed the same as the Mexican group and substantially worse than the U.S. group.  
+
+Although evidence of discrete groups was not entirely strong, this analysis suggests that substantial heterogeneity exists in the sample, and this heterogeneity has implications for academic outcomes. The 0.5 generation in Mexico has both advantaged and disadvantaged members (as well as many in between), so any attempts to paint the group as having only one type of academic experience are flawed. This being said, there is evidence that no matter the amount of individual advantage (at least as observed in these data), disparities with the U.S. reference group are clear. Even children of immigrants with relative privilege obtain lower scores than the counterfactual group that did not return migrate.
+
+This study suggests a number of future directions for research on the 0.5 generation. First, this study has not been able to differentiate between voluntary and involuntary return migration. The threat of deportation has been shown to negatively impact student achievement [@gandara_2021_schools], and deportation itself is likely to have even more negative effects; future work should attempt to differentiate the effects of different types of return. Second, qualitative studies of the Mexican 0.5 generation have often pooled together students born in the U.S. and those born in Mexico who migrate to the U.S. at an early age [@zuniga_2018_generation; @zuniga_2018_ninas; @zuniga_2021_children]. Although identifying the latter is not possible in PISA data, future research should assess the achievement of this group as well. Lastly, we do not know if achievement varies by age. Previous work has shown that disparities for children of immigrants may be greatest at younger ages [@hoffmann_2018_cognitive], and educational parity at older ages may not translate to equality in the labor market [@lee_2021_asian, p. 192-193]. Future work should investigate achievement at younger ages as well as the school-to-work transition for the 0.5 generation.  
+
+This study constitutes an important corrective to literature on the 0.5 generation. First, by showing that the educational situation of these students is generally one of advantage rather than disadvantage when compared to other students in Mexico, this study contradicts much previous research on this group that depicts these students as strangers in the homeland who struggle academically. Second, this paper shows the value of exploring heterogeneity in a group of students; variations in individual advantage can have important impacts on academic outcomes. Third, this paper shows that studies that focus on only one country fail to capture the importance of institutional context. The U.S. comparisons presented here show that migration from more- to less-advantaged educational contexts can entail unfortunate consequences for children's educational outcomes. Since many of these returns result from deportation of parents, this paper documents yet another way that U.S.-citizen children of undocumented immigrants are harmed by punitive immigration policy. 
+
+\newpage
+
+# References
