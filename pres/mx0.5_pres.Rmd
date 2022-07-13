@@ -2,7 +2,7 @@
 output:
   beamer_presentation:
     keep_tex: no
-    incremental: no
+    incremental: yes
     toc: no
     latex_engine: pdflatex
     slide_level: 2
@@ -260,14 +260,20 @@ stacked_bar <- function(data, x, fill){
 
 ## Introduction  
 
-\center ![](return_graph.png){height=80%} 
 
-\note{
-Due to both changing economic conditions and rising deportations, millions of Mexican migrants in the U.S. have returned to Mexico in recent years. This graph from Pew shows that net migration from Mexico to the U.S. was negative for much of the past three decades.
-}
+::: columns
 
-## Introduction
-```{r}
+:::: column
+
+- Abundance of research on return migrants, but little on the children who accompany them
+- About 500,000 American-born minors live in Mexico (~2 percent of school enrollment) 
+- *0.5 generation*: children of Mexican immigrants who are born in the U.S. and later migrate to Mexico [@zuniga_2018_ninas]
+
+::::
+
+:::: column
+
+```{r, fig.height = 15}
 data.frame(Year = c('2000', '2010', '2020'),
            count = c(258, 570, 500)) %>%
   ggplot(aes(x = Year, y = count)) + # , group = 1)) +
@@ -275,74 +281,74 @@ data.frame(Year = c('2000', '2010', '2020'),
   #geom_line(color = uclablue) + geom_point(color = uclablue) +
   ylim(c(0, 600)) +
   labs(y = 'Count (thousands)',
-      title = 'U.S.-born minors in the Mexican census')
+      title = 'U.S.-born minors in the Mexican census') +
+  theme(text = element_text(size = 35))  
 ```
 
+::::
 
-\note{Significant numbers of children have accompanied these return migrants. As shown here, in 2000, the Mexican census counted 258,000 U.S.-born minors. By 2010, this had more than doubled to 570,000. This number has remained fairly steady in the years since.
-}
+:::
 
-## Introduction
-- Abundance of research on return migration, but few on the children who accompany returnees
-- About 500,000 American-born minors live in Mexico (~2 percent of school enrollment) [@masferrer_2021_return, p. 39]
-- *0.5 generation*: children of Mexican immigrants who are born in the U.S. and later migrate to Mexico [@zuniga_2018_ninas]
 
 \note{\begin{itemize}
-\item There has been an abundance of research on return migration, and yet few studies focus on children who accompany these returnees. 
-\item Current estimates suggest that about 500,000 American-born minors live in Mexico, constituting about 2 percent of school enrollment. 
+\item Due to both changing economic conditions and rising deportations, millions of Mexican migrants in the U.S. have returned to Mexico in recent years. There has been an abundance of research on these returnees, and yet few studies focus on the children who accompany them. 
+\item As shown in the census data on the right, current estimates suggest that about 500,000 American-born minors now live in Mexico, constituting about 2 percent of school enrollment. 
 \item Following Víctor Zúñiga and colleagues, I refer to these children as the "0.5 generation": children of Mexican immigrants who are born in the U.S. and later migrate to Mexico.  
 \end{itemize}}
 
 ## Introduction
 - What does it mean to assimilate into a society where ethnic, cultural, and legal barriers are at a minimum?
-- Diverging findings in previous, mainly qualitative, studies of these children in Mexico
+- Previous, mainly qualitative studies present diverging findings
 - Predominant narrative of struggles: difficulty with written language, invisibility to teachers, stigma and exclusion from other youths
 - @bybee_2020_estamos: teachers characterize them as "star students," capitalizing on their binational and bicultural assets
 
 \note{\begin{itemize}
-\item What does it mean to assimilate into a society where ethnic, cultural, and legal barriers are at a minimum? 
-\item Assimilation theory might predict a smooth transition, and yet the small-scale studies that exist present diverging findings. 
+\item What does it mean to assimilate into a society where ethnic, cultural, and legal barriers are at a minimum? Assimilation theory might predict a smooth transition.
+\item And yet the small-scale studies of the 0.5 generation that exist present diverging findings. 
 \item The predominant narrative is of struggles in school: difficulty with written language, invisibility to teachers, and stigma and exclusion from other youths. But not all research depicts these adolescents as strangers in their homeland. 
-\item Despite these youths' challenges in adjusting to daily life in Mexico, teachers characterize them as "star students" in their academic achievement, capitalizing on their binational and bicultural assets.
+\item Despite these youths' challenges in adjusting to daily life in Mexico, some teachers characterize them as "star students" in their academic achievement, capitalizing on their binational and bicultural assets.
 \end{itemize}}
 
 ## Introduction
 **Research questions**  
 
-- Is the typical experience of these students of academic advantage or disadvantage? 
-- If disparities exist, is this due to the challenges of migration or a process of migrant selection?
-
+- What is migrant success? Importance of comparison group
+1. How do the academic outcomes of the 0.5 generation compare to other youths in Mexico?
+    + Descriptive assessment of Mexican educational context
+2. How do their academic outcomes compare to similar adolescents in the U.S.?
+    + Counterfactual: what would have happened to these children had they not migrated to Mexico?
+3. If disparities exist, are these due to selection on pre-migration characteristics?
+4. Do post-migration individual characteristics mediate effects?
 
 \note{\begin{itemize}
-\item How can we reconcile this divergence? This paper addresses two research questions. First, is the typical experience of these students of academic advantage or disadvantage? 
-\item And if disparities exist, is this due to the challenges of migration or a process of migrant selection?
+\item How can we reconcile this divergence? Part of the issue is how we define migrant success. Much depends on the comparison group, so I use two approaches.  
+\item First, how do the academic outcomes of the 0.5 generation compare to other youths in Mexico?
+\item This comparison descriptively places U.S.-born children of Mexican return migrants in the Mexican educational context. 
+\item Second, how do their academic outcomes compare to similar adolescents in the U.S.?
+\item The target here is a counterfactual, causal estimand: the scores these children would have obtained in the U.S. had they not migrated to Mexico.
+\item I also address two mechanistic research questions. If disparities exist, are these due to selection on pre-migration characteristics?
+\item Lastly, do post-migration individual characteristics mediate any effects of migration on assessment scores?
 \end{itemize}}
 
 
-<!-- - Pew estimates that from 2005 to 2010, 1.39 million Mexican immigrants returned to Mexico from the U.S., and 710,000 returned between 2013 and 2018 -->
-<!-- - In large part deportations of undocumented immigrants, but 45 percent return voluntarily [@warren_2020_reverse] -->
-<!-- - Precarious economic conditions in the U.S. and a stabilizing Mexican economy have increased incentives to return -->
-
-<!-- \note{ -->
-<!-- The Mexico-U.S. migration system has changed dramatically in the 21st century. After decades of high migration from Mexico to the U.S., Pew estimates that from 2005 to 2010, 1.39 million Mexican immigrants returned to Mexico from the U.S., and 710,000 returned between 2013 and 2018. -->
-<!-- } -->
 
 # Empirical Expectations
-## Empirical Expectations
 **Why might these adolescents be *disadvantaged*?**
 
 - Neoclassical economics: Parents return due to negative factors, such as unemployment, deportation
 - Transnationalism: Alienation and exclusion in the "home" society 
 - Institutionalism: lack of infrastructure for investment [@hagan_2020_return, p. 539].
 - @cassarino_2004_theorising: deportation means that migrants not "ready and willing" to migrate  
-- **Rough re-entry hypothesis**: Compared to Mexican-born children in Mexico, children of return migrants attain lower PISA scores.
+- @hernandez-leon_2020_imperfect suggest that "U.S. policies [...] effectively externalize downward assimilation to communities of origin." 
+- **Rough re-entry hypothesis**: Children of return migrants score lower on academic assessments than the comparison group. 
 
 \note{\begin{itemize}
-\item Previous theoretical work suggests why we might see diverging findings. I first consider reasons why these adolescents might be disadvantaged. Neoclassical economics suggests that return migrant families may not have found lucrative employment in the host country. 
+\item Previous theoretical work suggests why we might see diverging findings in previous work. I first consider reasons why these adolescents might be disadvantaged. Neoclassical economics suggests that return migrant families may not have found lucrative employment in the host country. 
 \item Even in cases where they have, a transnationalist perspective emphasizes that alienation and exclusion in the "home" society can still afflict return migrants and their children as they struggle with their identities. 
 \item Institutions for investment and activation of resources gained in the U.S. may also be lacking. 
-\item And in the words of Cassarino's resource-mobilization framework, migrants who are not ready and willing to migrate are less likely to possess the resources to ease re-entry into Mexican society. 
-\item These expectations lead to what I call the rough re-entry hypothesis: Compared to Mexican-born children in Mexico, children of return migrants attain lower PISA scores.  
+\item In the words of Cassarino's resource-mobilization framework, migrants who are not ready and willing to migrate are less likely to possess the resources to ease re-entry into Mexican society.  
+\item Along these lines, Hernández-León and colleges suggest that "U.S. policies [...] effectively externalize downward assimilation to communities of origin." Migrants who return to Mexico from the U.S., whether due to deportation or other reasons, may be those having the roughest time in the host country.
+\item These expectations lead to what I call the rough re-entry hypothesis: Children of return migrants score lower on academic assessments than the comparison group. 
 \end{itemize}}
 
 
@@ -353,82 +359,81 @@ data.frame(Year = c('2000', '2010', '2020'),
 - Ready and willing to migrate (Cassarino 2004)
 - Benefit from resources such as dual nationality, bicultural facility, and experience in better resourced schools (Gándara & Jensen 2021) 
 - Assimilation theory: absence of most social markers of difference $\implies$ smooth integration (Alba & Nee 2003)  
-- **Star student hypothesis**: Compared to Mexican-born children in Mexico, children of return migrants attain higher PISA scores.
+- **Star student hypothesis**: Children of return migrants score higher on academic assessments than the comparison group. 
 
 \note{\begin{itemize}
 \item On the other hand, why might these adolescents be advantaged? The New Economics of Labor Migration highlights how voluntary return migration can be evidence of economic success, with parents accumulating sufficient resources to lead a comfortable life in Mexico. 
 \item Following Cassarino, if the family is ready and willing to move, they are more likely to be well supported upon return to the parents' country of origin. 
 \item Scholars suggest that at least some of these children benefit from resources such as dual nationality, bicultural facility, and experience in better resourced schools. 
 \item Furthermore, in the absence of most social markers of difference, assimilation theory predicts that integration should be straightforward and rapid. 
-\item Referencing the "star student discourse" documented by Bybee et al., the star student hypothesis predicts the following: Compared to Mexican-born children in Mexico, children of return migrants attain higher PISA scores. 
+\item Referencing the "star student discourse" documented by Bybee et al., the star student hypothesis predicts the following: Children of return migrants score higher on academic assessments than the comparison group. 
 \end{itemize}}
 
-## Empirical Expectations
-**Role of return-migrant selection?**  
+<!-- ## Empirical Expectations -->
+<!-- **Role of return-migrant selection?**   -->
 
--  For return migrants from the U.S. to Mexico, negative selection on characteristics such as education and income has predominated in recent years
-- @hernandez-leon_2020_imperfect suggest that "U.S. policies [...] effectively externalize downward assimilation to communities of origin."   
-- **Selection hypothesis**: Compared to Spanish-speaking children of immigrants in the U.S., children of return migrants in Mexico attain lower PISA scores. However, in models adjusting for family background and resources, this disparity diminishes. 
+<!-- -  For return migrants from the U.S. to Mexico, negative selection on characteristics such as education and income has predominated in recent years -->
+<!-- - @hernandez-leon_2020_imperfect suggest that "U.S. policies [...] effectively externalize downward assimilation to communities of origin."  -->
+<!-- -  -->
+<!-- - **Selection hypothesis**: In models adjusting for family background and resources, estimated disparities become smaller. -->
 
-\note{\begin{itemize}
-\item If the rough re-entry hypothesis is correct, then these students' challenges may be connected to return-migrant selection. For return migrants from the U.S. to Mexico, negative selection on characteristics such as education and income has predominated in recent years.
-\item Observing which migrant families both voluntarily and involuntarily return to Mexico, Hernández-León et al. suggest that "U.S. policies [...] effectively externalize downward assimilation to communities of origin." Migrants who return to Mexico from the U.S. may be those having the roughest time in the host country; hence their children are a selected group, more likely to struggle in the homeland due to disadvantage accrued before return. 
-\item I call this third set of expectations the selection hypothesis: Compared to Spanish-speaking children of immigrants in the U.S., children of return migrants in Mexico attain lower PISA scores. However, in models adjusting for family background and resources, this disparity diminishes. 
-\end{itemize}}
+<!-- \note{\begin{itemize} -->
+<!-- \item If the rough re-entry hypothesis is correct, then these students' challenges may be connected to return-migrant selection. For return migrants from the U.S. to Mexico, negative selection on characteristics such as education and income has predominated in recent years. -->
+<!-- \item Observing which migrant families both voluntarily and involuntarily return to Mexico, Hernández-León et al. suggest that "U.S. policies [...] effectively externalize downward assimilation to communities of origin." Migrants who return to Mexico from the U.S. may be those having the roughest time in the host country; hence their children are a selected group, more likely to struggle in the homeland due to disadvantage accrued before return.  -->
+<!-- \item I call this third set of expectations the selection hypothesis: Compared to Spanish-speaking children of immigrants in the U.S., children of return migrants in Mexico attain lower PISA scores. However, in models adjusting for family background and resources, this disparity diminishes.  -->
+<!-- \end{itemize}} -->
 
+
+
+
+
+
+
+
+
+<!-- \note{\begin{itemize} -->
+<!-- \item Sample sizes are  -->
+<!-- \item I perform each analysis once for each of five plausible values provided in the data, combining estimates in accordance with the PISA technical report.  -->
+<!-- \item I include pre-migration and post-migration variables separately, which I describe in greater detail in the paper. I can go into greater detail in the Q and A. -->
+<!-- \end{itemize}} -->
 
 
 # Data and Methods
-## Data and Methods
+## Data
 - Programme for International Student Assessment (PISA) for 2012, 2015, and 2018
   + reading, math, and science
-  + mean of 500, sd of 100
-  + each analysis performed once for each of 5 plausible values
-- Pre-migration variables: mother's and father's education (6-category ISCED), cultural possessions, home educational resources, age (15 for most respondents), early childhood education and care (ECEC), two-category gender
-- Post-migration variables:  household wealth, home possessions, home information and communication technology (ICT) resources, and an index of economic, social and cultural status, highest parental occupational status measured (ISEI), urban locality
+- Main sample: `r sum(pisa_mex$treat == T)` children born to two Mexican parents in the U.S., now living in Mexico
+- Mexico comparison: `r sum(pisa_mex$treat == F)` children of non-immigrants in Mexico
+- U.S. comparison: `r sum(pisa_mex_us$treat == F)` Spanish-speaking children of two immigrants in the U.S.
 
 \note{\begin{itemize}
 \item Data for this study come from the pooled 2012, 2015, and 2018 waves of the Programme for International Student Assessment, or PISA, a standardized test administered to 15-year-olds in dozens of countries worldwide. 
-\item for reading, math and science. 
-\item Each subject score has a global mean of 500 and standard deviation of 100. In the following slides, results are reported in terms of standard deviation. 
-\item I perform each analysis once for each of five plausible values provided in the data, combining estimates in accordance with the PISA technical report. 
-\item I include pre-migration and post-migration variables separately, which I describe in greater detail in the paper. I can go into greater detail in the Q and A.
-\end{itemize}}
-
-
-## Data and Methods
-- What is migrant success? Importance of comparison group
-- Main sample: `r sum(pisa_mex$treat == T)` children born to two Mexican parents in the U.S., now living in Mexico
-- Mexico comparison: `r sum(pisa_mex$treat == F)` children of non-immigrants in Mexico
-    + Descriptive assessment of Mexican educational context
-- U.S. comparison: `r sum(pisa_mex_us$treat == F)` Spanish-speaking children of two immigrants in the U.S.
-    + Counterfactual: what would have happened to these children had they not migrated to Mexico?
-    + PISA data for the U.S. does not allow disaggregating by parental origin, children of Mexican immigrants predominate among Spanish-speaking youth and obtain similar scores on academic assessments
-
-\note{\begin{itemize}
-\item For the 0.5 generation, how do we define "positive" or "negative" outcomes in school? Much depends on the comparison group. 
+\item I use scores for reading, math and science. 
 \item The main sample consists of 465 children born to two Mexican parents in the U.S., now living in Mexico.
 \item The first analyses compare them to 40,710 local Mexican children without migration backgrounds, 
-\item descriptively placing U.S.-born children of Mexican return migrants in the Mexican educational context. 
-\item Second, I compare these children to a suitable group in the U.S.: 926 Spanish-speaking children of immigrants in the U.S. 
-\item The target here is a counterfactual, causal estimand: the scores these children would have obtained in the U.S. had they not migrated to Mexico. 
-\item Unfortunately, PISA data for the U.S. does not allow disaggregating by parental origin, but previous research shows that children of Mexican immigrants predominate among Spanish-speaking youth and obtain similar scores on academic assessments as children of immigrants from other Spanish-speaking countries.
+\item Second, I compare these children to a suitable group in the U.S.: 926 Spanish-speaking children of immigrants in the U.S. Unfortunately, PISA data for the U.S. do not allow disaggregating by parental origin, but previous research shows that children of Mexican immigrants predominate among Spanish-speaking youth and obtain similar scores as children of immigrants from other Spanish-speaking countries.
 \end{itemize}}
 
 
-## Data and Methods
-- Difference-in-means and OLS regression estimates 
-- Adjusting for pre-, then post-migration characteristics (mediators)
+## Methods
+- Difference-in-means and OLS regression estimates
+- Adjusting for pre-migration variables: role of selection?
+    + Mother's and father's education (6-category ISCED), cultural possessions, home educational resources, age (15 for most respondents), early childhood education and care (ECEC), two-category gender
+- Adjusting for post-migration variables: do individual/family characteristics mediate the effect of migration?
+    + Household wealth, home possessions, home information and communication technology (ICT) resources, and an index of economic, social and cultural status, highest parental occupational status measured (ISEI), urban locality
 - Analysis of moderators
-- HC1 clustered standard errors at the school level, sampling weights
+- HC1 clustered standard errors at the school level, sampling weights, 5 plausible values
 - Sensitivity analysis with other estimation methods
 
 \note{\begin{itemize}
-\item I present difference-in-means and OLS regression estimates 
-\item that adjust for pre- and then post-migration characteristics. 
+\item I present difference-in-means and OLS regression estimates. I report results in terms of standard deviation. 
+\item In OLS models, I adjust for pre-migration characteristics to help show whether migrant selection plays a role. 
+\item (next bullet)
+\item In additional models, I add post-migration characteristics as well to investigate whether these mediate the effects of migration.
+\item I can go into more details about these variables in the Q and A.
 \item I also assess the influence of moderators. 
-\item All analyses use HC1 clustered standard errors at the school level and sampling weights. 
-\item I also conduct sensitivity analysis with other estimation methods, though I do not present those results here.
+\item All analyses use HC1 clustered standard errors at the school level and sampling weights. I combine estimates from 5 plausible values as recommended in the PISA technical report.
+\item In the paper, I also conduct sensitivity analyses with other estimation methods.
 \end{itemize}}
 
 
@@ -547,14 +552,14 @@ This figure conducts the same analysis, but with the U.S. pseudo-control group i
 - Previous studies have mixed findings, with negative outcomes predominating
 - **Star student hypothesis**: slight advantage compared to Mexican youths
 - **Rough re-entry hypothesis**: stark disadvantage compared to similar U.S. adolescents
-- **Selection hypothesis**: Controlling for pre- or post-migration characteristics does not change conclusions
+- Controlling for pre- or post-migration characteristics does not change conclusions
 - Little variation by moderators
 
 \note{\begin{itemize}
-\item In sum, this paper aimed to quantify the educational situation of U.S.-born children of return migrants in Mexico. Previous studies yielded mixed findings, with negative outcomes predominating. I tested three empirical expectations generated from previous work. 
+\item In sum, this paper aimed to quantify the educational situation of U.S.-born children of return migrants in Mexico. Previous studies yielded mixed findings, with negative outcomes predominating. I tested two empirical expectations generated from previous work. 
 \item First, the star student hypothesis held for Mexico comparisons: the 0.5 generation retains a slight advantage compared to Mexican youths. 
 \item However, when I change the reference group to similar youths in the U.S., I find support for the rough re-entry hypothesis: children of return migrants in Mexico face a stark disadvantage compared to similar children in the U.S. 
-\item I find little support for the selection hypothesis: controlling for pre- or post-migration characteristics does not change conclusions. 
+\item I find little support for migrant selection or mediation by individual factors: controlling for pre- or post-migration characteristics does not change conclusions. 
 \item There is also little variation by moderators.
 \end{itemize}}
 
@@ -568,7 +573,8 @@ This figure conducts the same analysis, but with the U.S. pseudo-control group i
 
 \note{\begin{itemize}
 \item In conclusion, this study constitutes an important corrective to literature on the 0.5 generation in Mexico. First, by showing that the educational situation of these students is one of advantage rather than disadvantage when compared to other students in Mexico, this study contradicts much previous research on this group that depicts these students as strangers in the homeland who struggle academically. 
-\item Second, this paper shows that studies that focus on only one country fail to capture the importance of institutional context. The U.S. comparisons presented here show that migration from more- to less-resourced educational contexts can entail unfortunate consequences for children's educational outcomes. 
+\item Second, this paper shows that studies that focus on only one country fail to capture the importance of institutional context. 
+\item The U.S. comparisons presented here show that migration from more- to less-resourced educational contexts can entail unfortunate consequences for children's educational outcomes. 
 \item In this case, where few social markers of difference exist, smooth assimilation does occur. But it is to the relatively low educational average of Mexican schools. 
 \item Since many of these returns result from deportation of parents, this paper documents yet another way that U.S.-citizen children of undocumented immigrants are harmed by punitive immigration policy. 
 \end{itemize}}
