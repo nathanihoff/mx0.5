@@ -266,7 +266,6 @@ stacked_bar <- function(data, x, fill){
 :::: column
 
 - Largest return migration flow in the world is from the U.S. to Mexico [@azose_2019_estimation]
-- Abundance of research on return migrants, but little on the children who accompany them
 - About 500,000 American-born minors live in Mexico (~2 percent of school enrollment) 
 - *0.5 generation*: children of Mexican immigrants who are born in the U.S. and later migrate to Mexico (Zúñiga and Giorguli Saucedo 2018)
 
@@ -292,8 +291,7 @@ data.frame(Year = c('2000', '2010', '2020'),
 
 
 \note{\begin{itemize}
-\item Due to both changing economic conditions and rising deportations, millions of Mexican migrants in the U.S. have returned to Mexico in recent years, making it the largest return migrant flow in the world.
-\item There has been an abundance of research on these returnees, and yet few studies focus on the children who accompany them. 
+\item Due to both changing economic conditions and rising deportations, millions of Mexican migrants in the U.S. have returned to Mexico in recent years, making it the largest return migrant flow in the world. There has been an abundance of research on these returnees, and yet few studies focus on the children who accompany them. 
 \item As shown in the census data on the right, current estimates suggest that about 500,000 American-born minors now live in Mexico, constituting about 2 percent of school enrollment. 
 \item Following Víctor Zúñiga and colleagues, I refer to these children as the "0.5 generation": children of Mexican immigrants who are born in the U.S. and later migrate to Mexico.
 \end{itemize}}
@@ -393,7 +391,7 @@ data.frame(Year = c('2000', '2010', '2020'),
 \note{\begin{itemize}
 \item Individual resources or encumbrances may not be as important as the institutional context in which these children find themselves. Scholars of immigrant incorporation have found that institutional features of national systems may be at least as important as individual factors in accounting for incorporation outcomes. 
 \item Whether students are in supportive or unaccommodating academic environments may be decisive for their educational outcomes, regardless of individual factors. 
-\item In the Mexican education system, children the return migrants may be ill-served. Compared to the U.S., Mexican schools have much lower per-student funding, over-extended teachers, a short school day, and few provisions for Spanish language learners. All of these strains are likely to lower student achievement.  
+\item In the Mexican education system, children of return migrants may be ill-served. Compared to the U.S., Mexican schools have much lower per-student funding, over-extended teachers, a short school day, and few provisions for Spanish language learners. All of these strains are likely to lower student achievement.  
 \end{itemize}}
 
 
@@ -501,7 +499,7 @@ dim_fig_mex_us %>%
 ```
 
 \note{
-Let's move on to results. This first figure compares PISA scores of children of return migrants in Mexico to the local Mexican-born sample, with 95 percent confidence intervals. On the left, difference-in-means estimates show that children of return migrants perform somewhat better in all three subjects, but results are significant only for math, in orange, where their advantage amounts to one-fifth of a standard deviation. Turning to the middle set of estimates, the results barely change when pre-migration characteristics are included in OLS regressions. Hence the data provide partial support for educational advantage: despite the travails of migration, these children are not academically disadvantaged compared to their Mexican peers, attaining somewhat higher scores, at least in math. The estimates on the right account for post-migration individual characteristics as well. Since estimates do not move much, this suggests that individual factors do not account for the slight advantage enjoyed by the this population in school.
+Let's move on to results. This first figure compares PISA scores of children of return migrants in Mexico to the local Mexican-born sample, with 95 percent confidence intervals. On the left, difference-in-means estimates show that children of return migrants perform somewhat better in all three subjects, but results are significant only for math, in orange, where their advantage amounts to one-fifth of a standard deviation. Turning to the middle set of estimates, the results barely change when pre-migration characteristics are included in OLS regressions. Hence the data provide partial support for educational advantage: despite the travails of migration, these children are not academically disadvantaged compared to their Mexican peers, attaining somewhat higher scores, at least in math. The estimates on the right account for post-migration individual characteristics as well. Since estimates do not move much, this suggests that individual factors do not account for the slight advantage enjoyed by this population in school.
 }
 
 ## U.S. Comparisons
@@ -564,8 +562,8 @@ This figure conducts the same analysis, but with the U.S. pseudo-control group i
 - Little variation by moderators
 
 \note{\begin{itemize}
-\item In sum, this paper aimed to quantify the educational situation of U.S.-born children of return migrants in Mexico. Previous studies yielded mixed findings, with negative outcomes predominating. I tested two empirical expectations generated from previous work. 
-\item First, children of return migrants retain a slight advantage compared to Mexican youths. 
+\item In sum, this paper aimed to quantify the educational situation of U.S.-born children of return migrants in Mexico. Previous studies yielded mixed findings, with negative outcomes predominating. 
+\item My findings show that children of return migrants retain a slight advantage compared to Mexican youths. 
 \item However, when I change the reference group to similar youths in the U.S.,: children of return migrants in Mexico face a stark disadvantage  
 \item I find little support for migrant selection or mediation by individual factors: controlling for pre- or post-migration characteristics does not change conclusions. 
 \item There is also little variation by moderators.
@@ -580,7 +578,7 @@ This figure conducts the same analysis, but with the U.S. pseudo-control group i
 - Another way U.S.-citizen children of undocumented immigrants are harmed by punitive immigration policy
 
 \note{\begin{itemize}
-\item In conclusion, this study constitutes an important corrective to literature on U.S.-born children of Mexican return migrants. First, by showing that the educational situation of these students is one of advantage rather than disadvantage when compared to other students in Mexico, this study contradicts much previous research on this group that depicts these students as strangers in the homeland who struggle academically. 
+\item In conclusion, this study clarifies our perspective on U.S.-born children of Mexican return migrants. Whereas much previous research on this group that depicts these students as strangers in the homeland who struggle academically, my findings show that these students achieve higher scores on PISA than locals. 
 \item Second, this paper shows that studies that focus on only one country fail to capture the importance of institutional context. 
 \item The U.S. comparisons presented here show that migration from more- to less-resourced educational contexts can entail unfortunate consequences for children's educational outcomes. 
 \item In this case, where few social markers of difference exist, smooth assimilation does occur. But it is to the relatively low educational average of Mexican schools. 

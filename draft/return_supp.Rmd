@@ -32,11 +32,11 @@ linkcolor: blue
 lang: 'en-US'
 
 
-bibliography: "My Library.bib"  
+bibliography: "/Users/nathan/Documents/My Library.bib" 
 csl: apa.csl
 # csl: american-sociological-association.csl
 
-title: "Supplementary Material"
+title: "Online Appendix"
 subtitle: "Strangers in the Homeland? The Academic Performance of Children of Return Migrants in Mexico"
 author: |
   | Nathan I. Hoffmann
@@ -175,9 +175,48 @@ rubin_lm <- function(dataset, covariates, pv_num = 5,
 
 # (APPENDIX) Appendix {-} 
 
-# Full Regression Tables 
+## Full Regression Tables 
 
+```{r functions-supp}
 
+library(stargazer) 
+
+rubin_lm <- function(dataset, covariates, pv_num = 5, 
+                  treat = 'treat', weights = 'weight', cluster_var = 'school_id'){
+  dataset = as.data.frame(dataset)
+  lm_list <- list()
+  se_list <- list()
+  
+  for(outcome in c('read', 'math', 'scie')){
+    est_ols <- list()
+    var_ols <- list()
+    
+    for(pv in 1:pv_num){
+      formula <- paste0(outcome, pv, ' ~ ', treat, ' + ', covariates)
+      lm_model <- lm(formula, data = dataset, weights = weight)
+      est_ols[[pv]] <- tidy(lm_model)$estimate
+      var_ols[[pv]] <- diag(vcovCL(lm_model, cluster = dataset[, cluster_var]))
+      names(est_ols[[pv]]) <- names(var_ols[[pv]])
+      #var_ols[pv] <- vcovHC(lm_model, type="HC1")[2,2]
+    }
+    est_out_ols <- rowMeans(simplify2array(est_ols))
+    var_samp_ols <- rowMeans(simplify2array(var_ols))
+    var_imp_ols <- lapply(est_ols, function(x){(x - est_out_ols)^2}) %>%
+      simplify2array() %>%
+      rowSums()/4
+    se_out_ols <- sqrt(var_samp_ols + (1 + 1/5)*var_imp_ols)
+    
+    lm_final <- lm(reformulate(covariates, paste0(outcome,1)), 
+                   data = dataset, weights = weight)
+    lm_final$coefficients <- est_out_ols
+    
+    lm_list[[outcome]] <- lm_final
+    se_list[[outcome]] <- se_out_ols
+  }
+    return(list(estimates = lm_list, se_cluster = se_list))
+}
+
+```
 
 ```{r models-mex, results = 'asis'}
 ols_mex_pre <- rubin_lm(pisa_mex, 'mom_ed + dad_ed + female + early_ed +cultural_pos + home_ed + age + year')
@@ -201,7 +240,7 @@ stargazer(c(ols_mex_pre$estimates, ols_mex_post$estimates),
           notes.label = '',
           notes.align = 'l',
           notes.append = F,
-          font.size = 'small',
+          font.size = 'footnotesize',
           table.placement = "H",
           label = 'tab:models-mex',
           title = 'Full table of OLS coefficients for Mexican sample')
@@ -242,9 +281,9 @@ stargazer(c(ols_us_pre$estimates, ols_us_post$estimates),
 
 
 
-# Sensitivy Analysis
+## Sensitivy to Unobserved Confounders
 
-Important variables might be correlated with both immigration (and return migration) as well as test scores. For the Mexican comparison, results are already close to 0, so this section focuses on the U.S. comparison. How strong would an unobserved confounder need to be in order to create a null effect for migration to Mexico for the 0.5 generation? I use the omitted variable bias (OVB) analysis tools of the `sensemakr` package [@cinelli_2020] to help answer this question.  
+Important variables might be correlated with both immigration (and return migration) as well as test scores. For the Mexican comparison, results are already close to 0, so this section focuses on the U.S. comparison. How strong would an unobserved confounder need to be in order to create a null effect for migration to Mexico for the 0.5 generation? I use the omitted variable bias (OVB) analysis tools of the `sensemakr` package [@cinelli_2020_making] to help answer this question.  
 
 
 
@@ -310,9 +349,6 @@ pisa_mex %>%
   filter(treat == 0) %>%
   summarize(read = mean(read1), math = mean(math1), scie = mean(scie1))
 ```
-
-
-
 
 \newpage
 
